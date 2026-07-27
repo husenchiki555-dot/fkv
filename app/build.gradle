@@ -18,6 +18,7 @@ android {
         release {
             storeFile file('release-key.jks')
             storePassword 'collector2026'
+            storeType 'JKS'
             keyAlias 'elixircollector'
             keyPassword 'collector2026'
             enableV1Signing true
