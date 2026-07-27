@@ -3,6 +3,8 @@ name: Build and install-test Android APK
 on:
   push:
     branches: [ main, redesign-v2 ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
