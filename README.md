@@ -13,3 +13,5 @@ A standalone manual Android overlay for tracking estimated opponent elixir durin
 - No Firebase, account login, screen capture or external server
 
 This is an unofficial utility and is not affiliated with Supercell.
+
+Build validation branch.
