@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ElixirOverlay"
-include(":app")
+rootProject.name = 'ElixirCollector'
+include ':app'

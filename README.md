@@ -1,15 +1,13 @@
-# Elixir Overlay
+# Elixir Collector
 
-A standalone manual Android overlay for tracking estimated opponent elixir during Clash Royale matches.
+A standalone Android floating overlay for manually estimating an opponent's elixir during Clash Royale matches.
 
-## Features
+- Opens as a tiny number-only bubble in the top-right corner
+- Tap the number to expand or collapse the manual controls
+- Drag the number to reposition it
+- 1x, 2x and 3x regeneration modes
+- Card-cost buttons, undo, correction, pause and reset
+- Original purple elixir collector icon
+- Offline and account-free
 
-- Draggable floating counter
-- Automatic elixir regeneration
-- Manual 1x, 2x and 3x regeneration modes
-- Card-cost buttons from 1 to 9
-- Recent-cost history
-- Undo, +1 correction, reset and pause
-- No Firebase, account login, screen capture or external server
-
-This is an unofficial utility and is not affiliated with Supercell.
+This unofficial utility is not affiliated with Supercell.
