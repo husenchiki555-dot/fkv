@@ -2,7 +2,7 @@ name: Build and install-test Android APK
 
 on:
   push:
-    branches: [ main, redesign-v2 ]
+    branches: [ main, redesign-v2, live-practice-v3 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -39,19 +39,19 @@ jobs:
         run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk ElixirCollector-v2.apk
+        run: cp app/build/outputs/apk/release/app-release.apk ElixirCollector-LivePractice-v3.apk
 
       - name: Verify APK package and signatures
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging ElixirCollector-v2.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 ElixirCollector-v2.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ElixirCollector-v2.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging ElixirCollector-LivePractice-v3.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 ElixirCollector-LivePractice-v3.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ElixirCollector-LivePractice-v3.apk
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: ElixirCollector-v2-APK
-          path: ElixirCollector-v2.apk
+          name: ElixirCollector-LivePractice-v3-APK
+          path: ElixirCollector-LivePractice-v3.apk
           if-no-files-found: error
 
       - name: Install and launch on Android 15 emulator
@@ -64,6 +64,6 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r ElixirCollector-v2.apk
+            adb install -r ElixirCollector-LivePractice-v3.apk
             adb shell am start -W -n com.huseyn.elixircollector/.MainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
