@@ -4,12 +4,16 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <queries>
+        <package android:name="com.supercell.clashroyale" />
+    </queries>
 
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_dialog_info"
-        android:label="Elixir Overlay"
+        android:icon="@drawable/ic_elixir_collector"
+        android:roundIcon="@drawable/ic_elixir_collector"
+        android:label="Elixir Collector"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
@@ -25,10 +29,11 @@
         <service
             android:name=".OverlayService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Persistent user-controlled game counter overlay" />
+                android:value="User-started floating manual game counter" />
         </service>
     </application>
 
