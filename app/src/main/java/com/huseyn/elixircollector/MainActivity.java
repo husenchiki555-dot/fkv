@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,8 +20,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
+    private static final int REQUEST_LIVE_CAPTURE = 4103;
+
     private TextView permissionBadge;
-    private Button startButton;
+    private Button liveButton;
+    private boolean openGameAfterCapture;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -52,122 +56,159 @@ public class MainActivity extends Activity {
         LinearLayout hero = new LinearLayout(this);
         hero.setOrientation(LinearLayout.VERTICAL);
         hero.setGravity(Gravity.CENTER);
-        hero.setPadding(dp(18), dp(20), dp(18), dp(20));
+        hero.setPadding(dp(18), dp(18), dp(18), dp(18));
         hero.setBackground(panel(Color.rgb(43, 24, 60), 24, Color.rgb(142, 79, 184)));
-        page.addView(hero, matchWrap(dp(18)));
+        page.addView(hero, matchWrap(dp(16)));
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(R.drawable.ic_elixir_collector);
         icon.setContentDescription("Elixir collector icon");
-        hero.addView(icon, new LinearLayout.LayoutParams(dp(112), dp(112)));
+        hero.addView(icon, new LinearLayout.LayoutParams(dp(96), dp(96)));
 
-        TextView title = text("ELIXIR COLLECTOR", 27, Color.WHITE, true);
+        TextView title = text("ELIXIR COLLECTOR", 26, Color.WHITE, true);
         title.setGravity(Gravity.CENTER);
-        hero.addView(title, matchWrap(dp(5)));
+        hero.addView(title, matchWrap(dp(3)));
 
-        TextView subtitle = text("Manual floating elixir tracker", 15,
+        TextView subtitle = text("Tiny live practice counter", 15,
                 Color.rgb(226, 207, 239), false);
         subtitle.setGravity(Gravity.CENTER);
         hero.addView(subtitle, matchWrap(0));
 
-        LinearLayout setup = new LinearLayout(this);
-        setup.setOrientation(LinearLayout.VERTICAL);
-        setup.setPadding(dp(16), dp(16), dp(16), dp(16));
-        setup.setBackground(panel(Color.rgb(31, 24, 43), 20, Color.rgb(78, 62, 95)));
-        page.addView(setup, matchWrap(dp(14)));
+        LinearLayout liveCard = new LinearLayout(this);
+        liveCard.setOrientation(LinearLayout.VERTICAL);
+        liveCard.setPadding(dp(16), dp(16), dp(16), dp(16));
+        liveCard.setBackground(panel(Color.rgb(31, 24, 43), 20, Color.rgb(78, 62, 95)));
+        page.addView(liveCard, matchWrap(dp(12)));
 
-        TextView setupTitle = text("QUICK SETUP", 16, Color.rgb(231, 198, 255), true);
-        setup.addView(setupTitle, matchWrap(dp(10)));
+        TextView liveTitle = text("LIVE PRACTICE MODE", 17,
+                Color.rgb(232, 193, 255), true);
+        liveCard.addView(liveTitle, matchWrap(dp(8)));
 
-        setup.addView(step("1", "Allow display over other apps"), matchWrap(dp(8)));
-        setup.addView(step("2", "Start the floating tracker"), matchWrap(dp(8)));
-        setup.addView(step("3", "Open Clash Royale and tap each card cost"), matchWrap(dp(12)));
+        TextView liveInfo = text(
+                "Android asks for screen-capture permission each time. The app watches the opponent side and shows only a small movable number. When it sees an unknown deployment, tap the number once and label the card cost. Similar visual patterns can then be counted automatically.",
+                13, Color.rgb(222, 214, 231), false);
+        liveInfo.setLineSpacing(0, 1.18f);
+        liveCard.addView(liveInfo, matchWrap(dp(12)));
 
         permissionBadge = text("", 14, Color.WHITE, true);
         permissionBadge.setGravity(Gravity.CENTER);
         permissionBadge.setPadding(dp(12), dp(11), dp(12), dp(11));
-        setup.addView(permissionBadge, matchWrap(0));
+        liveCard.addView(permissionBadge, matchWrap(0));
 
         Button permission = button("ALLOW FLOATING WINDOW", Color.rgb(104, 54, 142));
         permission.setOnClickListener(v -> requestOverlayPermission());
-        page.addView(permission, matchHeight(dp(56), dp(10)));
+        page.addView(permission, matchHeight(dp(54), dp(9)));
 
-        startButton = button("START OVERLAY", Color.rgb(170, 73, 214));
-        startButton.setOnClickListener(v -> startOverlay(false));
-        page.addView(startButton, matchHeight(dp(58), dp(10)));
+        liveButton = button("START LIVE PRACTICE + OPEN GAME", Color.rgb(173, 73, 216));
+        liveButton.setOnClickListener(v -> requestLiveCapture(true));
+        page.addView(liveButton, matchHeight(dp(60), dp(9)));
 
-        Button startGame = button("START OVERLAY + OPEN GAME", Color.rgb(50, 112, 174));
-        startGame.setOnClickListener(v -> startOverlay(true));
-        page.addView(startGame, matchHeight(dp(56), dp(10)));
+        Button liveOnly = button("START LIVE PRACTICE", Color.rgb(115, 58, 157));
+        liveOnly.setOnClickListener(v -> requestLiveCapture(false));
+        page.addView(liveOnly, matchHeight(dp(54), dp(9)));
 
-        LinearLayout smallActions = new LinearLayout(this);
-        smallActions.setOrientation(LinearLayout.HORIZONTAL);
-        page.addView(smallActions, matchHeight(dp(50), dp(18)));
+        Button manual = button("MANUAL MODE", Color.rgb(50, 107, 162));
+        manual.setOnClickListener(v -> startManualOverlay());
+        page.addView(manual, matchHeight(dp(52), dp(9)));
 
-        Button openGame = button("OPEN GAME", Color.rgb(48, 57, 78));
-        openGame.setTextSize(13);
-        openGame.setOnClickListener(v -> openClashRoyale());
-        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, dp(50), 1f);
-        half.rightMargin = dp(6);
-        smallActions.addView(openGame, half);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        page.addView(actions, matchHeight(dp(48), dp(15)));
 
-        Button stop = button("STOP OVERLAY", Color.rgb(92, 42, 58));
+        Button stop = button("STOP EVERYTHING", Color.rgb(105, 42, 59));
         stop.setTextSize(13);
-        stop.setOnClickListener(v -> {
-            stopService(new Intent(this, OverlayService.class));
-            Toast.makeText(this, "Overlay stopped", Toast.LENGTH_SHORT).show();
-        });
-        LinearLayout.LayoutParams secondHalf = new LinearLayout.LayoutParams(0, dp(50), 1f);
-        secondHalf.leftMargin = dp(6);
-        smallActions.addView(stop, secondHalf);
+        stop.setOnClickListener(v -> stopEverything());
+        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        half.rightMargin = dp(5);
+        actions.addView(stop, half);
 
-        TextView note = text(
-                "This version is fully offline. It does not read the game screen or access your Supercell account. "
-                        + "The counter changes only when you tap a card cost.",
-                12, Color.rgb(161, 148, 177), false);
-        note.setGravity(Gravity.CENTER);
-        note.setLineSpacing(0, 1.2f);
-        page.addView(note, matchWrap(0));
+        Button forget = button("FORGET LEARNING", Color.rgb(91, 68, 45));
+        forget.setTextSize(13);
+        forget.setOnClickListener(v -> {
+            getSharedPreferences(LiveCaptureService.PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .clear()
+                    .apply();
+            Toast.makeText(this, "Learned deployment visuals cleared", Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        half2.leftMargin = dp(5);
+        actions.addView(forget, half2);
+
+        TextView warning = text(
+                "Experimental friendly-practice tool. Visual matching will not recognize every card reliably and may need corrections. It does not access your account, modify Clash Royale, or automate gameplay. Unsupported third-party software can still conflict with Supercell's fair-play rules, so do not use it in ranked or competitive matches.",
+                12, Color.rgb(171, 155, 185), false);
+        warning.setGravity(Gravity.CENTER);
+        warning.setLineSpacing(0, 1.18f);
+        page.addView(warning, matchWrap(0));
 
         setContentView(scroll);
         updatePermissionState();
     }
 
-    private LinearLayout step(String number, String label) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView badge = text(number, 14, Color.WHITE, true);
-        badge.setGravity(Gravity.CENTER);
-        badge.setBackground(panel(Color.rgb(121, 65, 159), 20, Color.TRANSPARENT));
-        row.addView(badge, new LinearLayout.LayoutParams(dp(32), dp(32)));
-
-        TextView body = text(label, 14, Color.rgb(226, 219, 234), false);
-        LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        bodyParams.leftMargin = dp(10);
-        row.addView(body, bodyParams);
-        return row;
-    }
-
-    private void requestOverlayPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Floating-window permission is already enabled", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + getPackageName()));
-        startActivity(intent);
-    }
-
-    private void startOverlay(boolean openGameAfter) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Enable the floating-window permission first", Toast.LENGTH_LONG).show();
+    private void requestLiveCapture(boolean openGame) {
+        if (!hasOverlayPermission()) {
+            Toast.makeText(this, "Enable the floating-window permission first",
+                    Toast.LENGTH_LONG).show();
             requestOverlayPermission();
             return;
         }
 
+        stopService(new Intent(this, OverlayService.class));
+        stopService(new Intent(this, LiveCaptureService.class));
+        openGameAfterCapture = openGame;
+
+        MediaProjectionManager manager =
+                (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        try {
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_LIVE_CAPTURE);
+        } catch (RuntimeException error) {
+            Toast.makeText(this,
+                    "Could not open screen-capture permission: "
+                            + error.getClass().getSimpleName(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_LIVE_CAPTURE) {
+            return;
+        }
+        if (resultCode != RESULT_OK || data == null) {
+            Toast.makeText(this, "Live screen analysis was cancelled", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Intent service = new Intent(this, LiveCaptureService.class);
+        service.putExtra(LiveCaptureService.EXTRA_RESULT_CODE, resultCode);
+        service.putExtra(LiveCaptureService.EXTRA_RESULT_DATA, data);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(service);
+            } else {
+                startService(service);
+            }
+            Toast.makeText(this, "Live practice analyzer started", Toast.LENGTH_SHORT).show();
+            if (openGameAfterCapture) {
+                getWindow().getDecorView().postDelayed(this::openClashRoyale, 450L);
+            }
+        } catch (RuntimeException error) {
+            Toast.makeText(this,
+                    "Could not start live mode: " + error.getClass().getSimpleName(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void startManualOverlay() {
+        if (!hasOverlayPermission()) {
+            Toast.makeText(this, "Enable the floating-window permission first",
+                    Toast.LENGTH_LONG).show();
+            requestOverlayPermission();
+            return;
+        }
+        stopService(new Intent(this, LiveCaptureService.class));
         Intent service = new Intent(this, OverlayService.class);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -175,14 +216,34 @@ public class MainActivity extends Activity {
             } else {
                 startService(service);
             }
-            Toast.makeText(this, "Floating tracker started", Toast.LENGTH_SHORT).show();
-            if (openGameAfter) {
-                getWindow().getDecorView().postDelayed(this::openClashRoyale, 350L);
-            }
+            Toast.makeText(this, "Manual overlay started", Toast.LENGTH_SHORT).show();
         } catch (RuntimeException error) {
-            Toast.makeText(this, "Could not start overlay: " + error.getClass().getSimpleName(),
+            Toast.makeText(this,
+                    "Could not start manual overlay: " + error.getClass().getSimpleName(),
                     Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void stopEverything() {
+        stopService(new Intent(this, OverlayService.class));
+        stopService(new Intent(this, LiveCaptureService.class));
+        Toast.makeText(this, "All Elixir Collector services stopped", Toast.LENGTH_SHORT).show();
+    }
+
+    private void requestOverlayPermission() {
+        if (hasOverlayPermission()) {
+            Toast.makeText(this, "Floating-window permission is already enabled",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName()));
+        startActivity(intent);
+    }
+
+    private boolean hasOverlayPermission() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || Settings.canDrawOverlays(this);
     }
 
     private void openClashRoyale() {
@@ -205,8 +266,10 @@ public class MainActivity extends Activity {
         if (permissionBadge == null) {
             return;
         }
-        boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this);
-        permissionBadge.setText(granted ? "✓ FLOATING WINDOW ENABLED" : "! FLOATING WINDOW REQUIRED");
+        boolean granted = hasOverlayPermission();
+        permissionBadge.setText(granted
+                ? "✓ FLOATING WINDOW ENABLED"
+                : "! FLOATING WINDOW REQUIRED");
         permissionBadge.setTextColor(granted
                 ? Color.rgb(178, 255, 198)
                 : Color.rgb(255, 196, 204));
@@ -214,8 +277,8 @@ public class MainActivity extends Activity {
                 granted ? Color.rgb(31, 83, 51) : Color.rgb(89, 40, 51),
                 14,
                 granted ? Color.rgb(76, 148, 94) : Color.rgb(145, 69, 82)));
-        if (startButton != null) {
-            startButton.setAlpha(granted ? 1f : 0.72f);
+        if (liveButton != null) {
+            liveButton.setAlpha(granted ? 1f : 0.7f);
         }
     }
 
