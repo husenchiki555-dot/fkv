@@ -36,22 +36,7 @@ jobs:
         run: base64 --decode app/release-key.jks.b64 > app/release-key.jks
 
       - name: Build signed release APK
-        run: |
-          set +e
-          gradle --no-daemon clean assembleRelease > build.log 2>&1
-          echo $? > build.exit
-          cat build.log
-          exit 0
-
-      - name: Upload compiler log
-        uses: actions/upload-artifact@v4
-        with:
-          name: ElixirCollector-build-log
-          path: build.log
-          if-no-files-found: error
-
-      - name: Require successful compilation
-        run: test "$(cat build.exit)" = "0"
+        run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
         run: cp app/build/outputs/apk/release/app-release.apk ElixirCollector-v2.apk
@@ -62,11 +47,19 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 ElixirCollector-v2.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ElixirCollector-v2.apk
 
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ElixirCollector-v2-APK
+          path: ElixirCollector-v2.apk
+          if-no-files-found: error
+
       - name: Install and launch on Android 15 emulator
+        timeout-minutes: 8
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          target: google_apis
+          target: default
           arch: x86_64
           profile: pixel_6
           disable-animations: true
@@ -74,10 +67,3 @@ jobs:
             adb install -r ElixirCollector-v2.apk
             adb shell am start -W -n com.huseyn.elixircollector/.MainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
-
-      - name: Upload installable APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ElixirCollector-v2-APK
-          path: ElixirCollector-v2.apk
-          if-no-files-found: error
