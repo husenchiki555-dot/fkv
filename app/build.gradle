@@ -11,7 +11,7 @@ android {
         minSdk 23
         targetSdk 35
         versionCode 300
-        versionName '3.0.0'
+        versionName '3.0.0-live-practice'
     }
 
     signingConfigs {
