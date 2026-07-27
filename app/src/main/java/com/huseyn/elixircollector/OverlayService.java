@@ -20,7 +20,6 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -33,25 +32,26 @@ public class OverlayService extends Service {
     private static final int NOTIFICATION_ID = 9021;
     private static final String ACTION_STOP = "com.huseyn.elixircollector.STOP_OVERLAY";
     private static final double BASE_SECONDS_PER_ELIXIR = 2.8;
+    private static final int COMPACT_WIDTH_DP = 96;
+    private static final int EXPANDED_WIDTH_DP = 314;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ArrayDeque<Integer> history = new ArrayDeque<>();
 
     private WindowManager windowManager;
     private WindowManager.LayoutParams params;
-    private View overlay;
+    private LinearLayout overlay;
     private LinearLayout expandedPanel;
     private TextView elixirValue;
     private TextView modeLabel;
     private TextView historyLabel;
     private TextView pauseButton;
-    private TextView expandButton;
     private TextView[] speedButtons;
 
     private double elixir = 5.0;
     private double multiplier = 1.0;
     private boolean running = true;
-    private boolean compact = false;
+    private boolean compact = true;
     private long lastTick;
 
     private final Runnable ticker = new Runnable() {
@@ -114,7 +114,7 @@ public class OverlayService extends Service {
             try {
                 windowManager.removeView(overlay);
             } catch (RuntimeException ignored) {
-                // Already removed by the system.
+                // Already removed by Android.
             }
         }
         overlay = null;
@@ -133,172 +133,164 @@ public class OverlayService extends Service {
                 : WindowManager.LayoutParams.TYPE_PHONE;
 
         params = new WindowManager.LayoutParams(
-                dp(326),
+                dp(COMPACT_WIDTH_DP),
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 type,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.START;
-        params.x = dp(10);
-        params.y = dp(110);
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        params.x = Math.max(dp(8), screenWidth - dp(COMPACT_WIDTH_DP) - dp(8));
+        params.y = dp(72);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(9), dp(8), dp(9), dp(9));
-        root.setBackground(panel(Color.argb(246, 20, 13, 29), 20,
-                Color.rgb(184, 103, 224), dp(2)));
-        root.setElevation(dp(14));
+        overlay = new LinearLayout(this);
+        overlay.setOrientation(LinearLayout.VERTICAL);
+        overlay.setPadding(dp(5), dp(5), dp(5), dp(5));
+        overlay.setBackground(panel(Color.argb(240, 24, 14, 34), 18,
+                Color.rgb(199, 103, 235), dp(2)));
+        overlay.setElevation(dp(12));
 
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        root.addView(header, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
-        installDrag(header);
+        LinearLayout compactBar = new LinearLayout(this);
+        compactBar.setOrientation(LinearLayout.HORIZONTAL);
+        compactBar.setGravity(Gravity.CENTER);
+        overlay.addView(compactBar, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(42)));
 
-        ImageView icon = new ImageView(this);
-        icon.setImageResource(R.drawable.ic_elixir_collector);
-        icon.setContentDescription("Elixir collector");
-        header.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
-
-        LinearLayout numbers = new LinearLayout(this);
-        numbers.setOrientation(LinearLayout.VERTICAL);
-        numbers.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams numbersParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
-        numbersParams.leftMargin = dp(7);
-        header.addView(numbers, numbersParams);
-
-        elixirValue = label("5.0", 24, Color.WHITE, true);
-        numbers.addView(elixirValue, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(28)));
-
-        modeLabel = label("OPPONENT • 1×", 10, Color.rgb(207, 172, 229), true);
-        numbers.addView(modeLabel, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(16)));
-
-        pauseButton = tinyButton("Ⅱ");
-        pauseButton.setContentDescription("Pause regeneration");
-        pauseButton.setOnClickListener(v -> togglePause());
-        header.addView(pauseButton, square(dp(38), dp(5)));
-
-        expandButton = tinyButton("−");
-        expandButton.setContentDescription("Collapse controls");
-        expandButton.setOnClickListener(v -> toggleCompact());
-        header.addView(expandButton, square(dp(38), dp(5)));
-
-        TextView close = tinyButton("×");
-        close.setContentDescription("Close overlay");
-        close.setOnClickListener(v -> stopSelf());
-        header.addView(close, square(dp(38), 0));
+        elixirValue = label("5.0", 21, Color.WHITE, true);
+        elixirValue.setGravity(Gravity.CENTER);
+        elixirValue.setContentDescription("Estimated opponent elixir. Tap to open controls.");
+        compactBar.addView(elixirValue, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(42)));
+        installDragAndTap(compactBar);
 
         expandedPanel = new LinearLayout(this);
         expandedPanel.setOrientation(LinearLayout.VERTICAL);
-        root.addView(expandedPanel, new LinearLayout.LayoutParams(
+        expandedPanel.setVisibility(View.GONE);
+        LinearLayout.LayoutParams expandedParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        expandedParams.topMargin = dp(4);
+        overlay.addView(expandedPanel, expandedParams);
 
-        historyLabel = label("LAST CARDS: —", 11, Color.rgb(182, 168, 198), false);
-        historyLabel.setGravity(Gravity.CENTER);
-        historyLabel.setPadding(0, dp(4), 0, dp(5));
-        expandedPanel.addView(historyLabel, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(28)));
-
+        addExpandedHeader();
         addSpeedRow();
         addCostGrid();
-        addActionRow();
+        addActionRows();
 
-        TextView help = label("Tap the elixir cost whenever the opponent plays a card", 10,
-                Color.rgb(150, 137, 164), false);
-        help.setGravity(Gravity.CENTER);
-        help.setPadding(0, dp(6), 0, 0);
-        expandedPanel.addView(help, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+        historyLabel = label("LAST: —", 10, Color.rgb(181, 164, 193), false);
+        historyLabel.setGravity(Gravity.CENTER);
+        historyLabel.setPadding(0, dp(5), 0, dp(2));
+        expandedPanel.addView(historyLabel, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(25)));
 
-        overlay = root;
         try {
             windowManager.addView(overlay, params);
             refresh();
         } catch (RuntimeException error) {
-            Toast.makeText(this, "Could not display overlay: " + error.getClass().getSimpleName(),
-                    Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Could not display overlay: "
+                    + error.getClass().getSimpleName(), Toast.LENGTH_LONG).show();
             stopSelf();
         }
+    }
+
+    private void addExpandedHeader() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        expandedPanel.addView(row, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40)));
+
+        modeLabel = label("OPPONENT • 1×", 11, Color.rgb(220, 184, 235), true);
+        modeLabel.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(modeLabel, new LinearLayout.LayoutParams(0, dp(38), 1f));
+
+        pauseButton = smallButton("Ⅱ");
+        pauseButton.setContentDescription("Pause regeneration");
+        pauseButton.setOnClickListener(v -> togglePause());
+        row.addView(pauseButton, fixedButton(dp(42), dp(5)));
+
+        TextView collapse = smallButton("−");
+        collapse.setContentDescription("Collapse to corner number");
+        collapse.setOnClickListener(v -> setCompact(true));
+        row.addView(collapse, fixedButton(dp(42), dp(5)));
+
+        TextView close = smallButton("×");
+        close.setContentDescription("Close overlay");
+        close.setOnClickListener(v -> stopSelf());
+        row.addView(close, fixedButton(dp(42), 0));
     }
 
     private void addSpeedRow() {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(2), 0, dp(6));
+        row.setPadding(0, dp(2), 0, dp(5));
         expandedPanel.addView(row, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(42)));
 
-        TextView label = label("REGEN", 11, Color.rgb(196, 176, 209), true);
-        label.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(label, new LinearLayout.LayoutParams(0, dp(36), 1f));
+        TextView title = label("REGEN", 11, Color.rgb(196, 176, 209), true);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(title, new LinearLayout.LayoutParams(0, dp(36), 1f));
 
         speedButtons = new TextView[3];
-        String[] texts = {"1×", "2×", "3×"};
-        for (int i = 0; i < texts.length; i++) {
-            final int selected = i;
-            TextView button = tinyButton(texts[i]);
+        for (int i = 0; i < 3; i++) {
+            final int index = i;
+            TextView button = smallButton((i + 1) + "×");
             button.setOnClickListener(v -> {
-                multiplier = selected + 1.0;
+                multiplier = index + 1.0;
                 lastTick = System.nanoTime();
                 refreshSpeedButtons();
                 refresh();
             });
             speedButtons[i] = button;
-            row.addView(button, square(dp(52), i == texts.length - 1 ? 0 : dp(5)));
+            row.addView(button, fixedButton(dp(48), i == 2 ? 0 : dp(5)));
         }
         refreshSpeedButtons();
     }
 
     private void addCostGrid() {
         int cost = 1;
-        for (int rowIndex = 0; rowIndex < 2; rowIndex++) {
+        for (int rowIndex = 0; rowIndex < 3; rowIndex++) {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, dp(52));
-            rowParams.bottomMargin = dp(5);
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+            rowParams.bottomMargin = dp(4);
             expandedPanel.addView(row, rowParams);
 
-            int buttonsThisRow = rowIndex == 0 ? 5 : 4;
-            for (int column = 0; column < buttonsThisRow; column++) {
+            for (int column = 0; column < 3; column++) {
                 final int cardCost = cost++;
                 TextView button = costButton(String.valueOf(cardCost));
                 button.setContentDescription("Opponent spent " + cardCost + " elixir");
                 button.setOnClickListener(v -> spend(cardCost));
-                LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(0, dp(50), 1f);
-                if (column < buttonsThisRow - 1) {
-                    buttonParams.rightMargin = dp(5);
+                LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
+                if (column < 2) {
+                    buttonParams.rightMargin = dp(4);
                 }
                 row.addView(button, buttonParams);
             }
         }
     }
 
-    private void addActionRow() {
+    private void addActionRows() {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER);
         expandedPanel.addView(row, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(42)));
 
         TextView undo = actionButton("UNDO", Color.rgb(58, 67, 88));
         undo.setOnClickListener(v -> undo());
-        row.addView(undo, weighted(dp(5)));
+        row.addView(undo, weighted(dp(4)));
 
         TextView plus = actionButton("+1", Color.rgb(43, 103, 77));
         plus.setOnClickListener(v -> {
             elixir = Math.min(10.0, elixir + 1.0);
             refresh();
         });
-        row.addView(plus, weighted(dp(5)));
+        row.addView(plus, weighted(dp(4)));
 
         TextView reset = actionButton("RESET 5", Color.rgb(106, 61, 137));
         reset.setOnClickListener(v -> {
@@ -339,17 +331,28 @@ public class OverlayService extends Service {
         refresh();
     }
 
-    private void toggleCompact() {
-        compact = !compact;
+    private void setCompact(boolean shouldCompact) {
+        compact = shouldCompact;
         expandedPanel.setVisibility(compact ? View.GONE : View.VISIBLE);
-        expandButton.setText(compact ? "+" : "−");
-        params.width = compact ? dp(222) : dp(326);
+        params.width = dp(compact ? COMPACT_WIDTH_DP : EXPANDED_WIDTH_DP);
+        clampToScreen();
         windowManager.updateViewLayout(overlay, params);
+    }
+
+    private void toggleCompact() {
+        setCompact(!compact);
+    }
+
+    private void clampToScreen() {
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int screenHeight = getResources().getDisplayMetrics().heightPixels;
+        params.x = Math.max(0, Math.min(params.x, screenWidth - params.width));
+        params.y = Math.max(0, Math.min(params.y, screenHeight - dp(48)));
     }
 
     private void refresh() {
         if (elixirValue != null) {
-            elixirValue.setText(String.format(Locale.US, "%.1f / 10", elixir));
+            elixirValue.setText(String.format(Locale.US, "%.1f", elixir));
             if (elixir < 2.0) {
                 elixirValue.setTextColor(Color.rgb(255, 127, 144));
             } else if (elixir >= 9.5) {
@@ -364,13 +367,13 @@ public class OverlayService extends Service {
         }
         if (historyLabel != null) {
             if (history.isEmpty()) {
-                historyLabel.setText("LAST CARDS: —");
+                historyLabel.setText("LAST: —");
             } else {
-                StringBuilder text = new StringBuilder("LAST CARDS: ");
+                StringBuilder text = new StringBuilder("LAST: ");
                 boolean first = true;
                 for (Integer cost : history) {
                     if (!first) {
-                        text.append("  •  ");
+                        text.append(" • ");
                     }
                     text.append(cost);
                     first = false;
@@ -388,19 +391,20 @@ public class OverlayService extends Service {
             boolean selected = Math.abs(multiplier - (i + 1.0)) < 0.01;
             speedButtons[i].setBackground(panel(
                     selected ? Color.rgb(157, 74, 195) : Color.rgb(52, 42, 64),
-                    12,
+                    11,
                     selected ? Color.rgb(225, 170, 255) : Color.rgb(78, 65, 91),
                     dp(1)));
             speedButtons[i].setTextColor(selected ? Color.WHITE : Color.rgb(205, 193, 216));
         }
     }
 
-    private void installDrag(View target) {
+    private void installDragAndTap(View target) {
         target.setOnTouchListener(new View.OnTouchListener() {
             private int startX;
             private int startY;
-            private float touchX;
-            private float touchY;
+            private float downX;
+            private float downY;
+            private boolean dragged;
 
             @Override
             public boolean onTouch(View view, MotionEvent event) {
@@ -408,13 +412,29 @@ public class OverlayService extends Service {
                     case MotionEvent.ACTION_DOWN:
                         startX = params.x;
                         startY = params.y;
-                        touchX = event.getRawX();
-                        touchY = event.getRawY();
+                        downX = event.getRawX();
+                        downY = event.getRawY();
+                        dragged = false;
                         return true;
                     case MotionEvent.ACTION_MOVE:
-                        params.x = startX + Math.round(event.getRawX() - touchX);
-                        params.y = Math.max(0, startY + Math.round(event.getRawY() - touchY));
-                        windowManager.updateViewLayout(overlay, params);
+                        float dx = event.getRawX() - downX;
+                        float dy = event.getRawY() - downY;
+                        if (Math.abs(dx) > dp(4) || Math.abs(dy) > dp(4)) {
+                            dragged = true;
+                        }
+                        if (dragged) {
+                            params.x = startX + Math.round(dx);
+                            params.y = startY + Math.round(dy);
+                            clampToScreen();
+                            windowManager.updateViewLayout(overlay, params);
+                        }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        if (!dragged) {
+                            toggleCompact();
+                        }
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
                         return true;
                     default:
                         return false;
@@ -434,18 +454,18 @@ public class OverlayService extends Service {
         return view;
     }
 
-    private TextView tinyButton(String text) {
-        TextView button = label(text, 15, Color.WHITE, true);
+    private TextView smallButton(String text) {
+        TextView button = label(text, 14, Color.WHITE, true);
         button.setGravity(Gravity.CENTER);
-        button.setBackground(panel(Color.rgb(52, 42, 64), 12,
+        button.setBackground(panel(Color.rgb(52, 42, 64), 11,
                 Color.rgb(85, 69, 98), dp(1)));
         return button;
     }
 
     private TextView costButton(String text) {
-        TextView button = label(text, 20, Color.WHITE, true);
+        TextView button = label(text, 19, Color.WHITE, true);
         button.setGravity(Gravity.CENTER);
-        button.setBackground(panel(Color.rgb(113, 50, 143), 14,
+        button.setBackground(panel(Color.rgb(113, 50, 143), 13,
                 Color.rgb(202, 118, 238), dp(1)));
         return button;
     }
@@ -453,20 +473,20 @@ public class OverlayService extends Service {
     private TextView actionButton(String text, int color) {
         TextView button = label(text, 11, Color.WHITE, true);
         button.setGravity(Gravity.CENTER);
-        button.setBackground(panel(color, 12, Color.argb(70, 255, 255, 255), dp(1)));
+        button.setBackground(panel(color, 11, Color.argb(70, 255, 255, 255), dp(1)));
         return button;
     }
 
-    private LinearLayout.LayoutParams square(int width, int rightMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, dp(38));
-        params.rightMargin = rightMargin;
-        return params;
+    private LinearLayout.LayoutParams fixedButton(int width, int rightMargin) {
+        LinearLayout.LayoutParams layoutParams = new LinearLayout.LayoutParams(width, dp(36));
+        layoutParams.rightMargin = rightMargin;
+        return layoutParams;
     }
 
     private LinearLayout.LayoutParams weighted(int rightMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(42), 1f);
-        params.rightMargin = rightMargin;
-        return params;
+        LinearLayout.LayoutParams layoutParams = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        layoutParams.rightMargin = rightMargin;
+        return layoutParams;
     }
 
     private GradientDrawable panel(int fill, int radiusDp, int stroke, int strokeWidth) {
@@ -520,8 +540,8 @@ public class OverlayService extends Service {
                 : new Notification.Builder(this);
         return builder
                 .setSmallIcon(R.drawable.ic_notification_elixir)
-                .setContentTitle("Elixir Collector is active")
-                .setContentText("Tap card costs in the floating counter")
+                .setContentTitle("Elixir corner counter active")
+                .setContentText("Tap the corner number to open controls")
                 .setContentIntent(openPending)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
