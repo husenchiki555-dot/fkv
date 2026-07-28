@@ -19,8 +19,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-public class MainActivity extends Activity {
-    private static final int REQUEST_LIVE_CAPTURE = 4103;
+public class IconMainActivity extends Activity {
+    private static final int REQUEST_CAPTURE = 4204;
 
     private TextView permissionBadge;
     private Button liveButton;
@@ -69,84 +69,70 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         hero.addView(title, matchWrap(dp(3)));
 
-        TextView subtitle = text("Tiny live practice counter", 15,
+        TextView subtitle = text("Deployment-icon vision v4", 15,
                 Color.rgb(226, 207, 239), false);
         subtitle.setGravity(Gravity.CENTER);
         hero.addView(subtitle, matchWrap(0));
 
-        LinearLayout liveCard = new LinearLayout(this);
-        liveCard.setOrientation(LinearLayout.VERTICAL);
-        liveCard.setPadding(dp(16), dp(16), dp(16), dp(16));
-        liveCard.setBackground(panel(Color.rgb(31, 24, 43), 20, Color.rgb(78, 62, 95)));
-        page.addView(liveCard, matchWrap(dp(12)));
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(16), dp(16), dp(16));
+        card.setBackground(panel(Color.rgb(31, 24, 43), 20, Color.rgb(78, 62, 95)));
+        page.addView(card, matchWrap(dp(12)));
 
-        TextView liveTitle = text("LIVE PRACTICE MODE", 17,
+        TextView cardTitle = text("LIVE FRIENDLY-PRACTICE MODE", 17,
                 Color.rgb(232, 193, 255), true);
-        liveCard.addView(liveTitle, matchWrap(dp(8)));
+        card.addView(cardTitle, matchWrap(dp(8)));
 
-        TextView liveInfo = text(
-                "Android asks for screen-capture permission each time. The app watches the opponent side and shows only a small movable number. When it sees an unknown deployment, tap the number once and label the card cost. Similar visual patterns can then be counted automatically.",
+        TextView info = text(
+                "The app waits for the battle interface, resets automatically, then scans the full arena for the purple deployment-cost badge and reads its white digit. This shared badge is more reliable than trying to identify every troop skin or evolution separately.",
                 13, Color.rgb(222, 214, 231), false);
-        liveInfo.setLineSpacing(0, 1.18f);
-        liveCard.addView(liveInfo, matchWrap(dp(12)));
+        info.setLineSpacing(0, 1.18f);
+        card.addView(info, matchWrap(dp(10)));
+
+        TextView rules = text(
+                "Standard 1v1 timing is automatic: 1× for two minutes, 2× for the next two minutes, then 3×. The default actionable-start estimate is 7.5; expand the bubble to switch it to the literal 5.0 starting value or override special modes manually.",
+                12, Color.rgb(186, 172, 200), false);
+        rules.setLineSpacing(0, 1.16f);
+        card.addView(rules, matchWrap(dp(12)));
 
         permissionBadge = text("", 14, Color.WHITE, true);
         permissionBadge.setGravity(Gravity.CENTER);
         permissionBadge.setPadding(dp(12), dp(11), dp(12), dp(11));
-        liveCard.addView(permissionBadge, matchWrap(0));
+        card.addView(permissionBadge, matchWrap(0));
 
         Button permission = button("ALLOW FLOATING WINDOW", Color.rgb(104, 54, 142));
         permission.setOnClickListener(v -> requestOverlayPermission());
         page.addView(permission, matchHeight(dp(54), dp(9)));
 
-        liveButton = button("START LIVE PRACTICE + OPEN GAME", Color.rgb(173, 73, 216));
-        liveButton.setOnClickListener(v -> requestLiveCapture(true));
+        liveButton = button("START ICON VISION + OPEN GAME", Color.rgb(173, 73, 216));
+        liveButton.setOnClickListener(v -> requestCapture(true));
         page.addView(liveButton, matchHeight(dp(60), dp(9)));
 
-        Button liveOnly = button("START LIVE PRACTICE", Color.rgb(115, 58, 157));
-        liveOnly.setOnClickListener(v -> requestLiveCapture(false));
+        Button liveOnly = button("START ICON VISION", Color.rgb(115, 58, 157));
+        liveOnly.setOnClickListener(v -> requestCapture(false));
         page.addView(liveOnly, matchHeight(dp(54), dp(9)));
 
-        Button manual = button("MANUAL MODE", Color.rgb(50, 107, 162));
+        Button manual = button("MANUAL FALLBACK", Color.rgb(50, 107, 162));
         manual.setOnClickListener(v -> startManualOverlay());
         page.addView(manual, matchHeight(dp(52), dp(9)));
 
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        page.addView(actions, matchHeight(dp(48), dp(15)));
-
         Button stop = button("STOP EVERYTHING", Color.rgb(105, 42, 59));
-        stop.setTextSize(13);
         stop.setOnClickListener(v -> stopEverything());
-        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        half.rightMargin = dp(5);
-        actions.addView(stop, half);
+        page.addView(stop, matchHeight(dp(50), dp(15)));
 
-        Button forget = button("FORGET LEARNING", Color.rgb(91, 68, 45));
-        forget.setTextSize(13);
-        forget.setOnClickListener(v -> {
-            getSharedPreferences(LiveCaptureService.PREFS_NAME, MODE_PRIVATE)
-                    .edit()
-                    .clear()
-                    .apply();
-            Toast.makeText(this, "Learned deployment visuals cleared", Toast.LENGTH_SHORT).show();
-        });
-        LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        half2.leftMargin = dp(5);
-        actions.addView(forget, half2);
-
-        TextView warning = text(
-                "Experimental friendly-practice tool. Visual matching will not recognize every card reliably and may need corrections. It does not access your account, modify Clash Royale, or automate gameplay. Unsupported third-party software can still conflict with Supercell's fair-play rules, so do not use it in ranked or competitive matches.",
+        TextView note = text(
+                "The icon reader can still miss very brief badges, unusual aspect ratios, Hero/Champion ability spending, Elixir Collector production, Elixir Golem refunds, 2v2 regeneration, and special-event rules. Use the tiny bubble's +1, −1, manual-cost and speed controls to correct those cases.",
                 12, Color.rgb(171, 155, 185), false);
-        warning.setGravity(Gravity.CENTER);
-        warning.setLineSpacing(0, 1.18f);
-        page.addView(warning, matchWrap(0));
+        note.setGravity(Gravity.CENTER);
+        note.setLineSpacing(0, 1.18f);
+        page.addView(note, matchWrap(0));
 
         setContentView(scroll);
         updatePermissionState();
     }
 
-    private void requestLiveCapture(boolean openGame) {
+    private void requestCapture(boolean openGame) {
         if (!hasOverlayPermission()) {
             Toast.makeText(this, "Enable the floating-window permission first",
                     Toast.LENGTH_LONG).show();
@@ -154,14 +140,12 @@ public class MainActivity extends Activity {
             return;
         }
 
-        stopService(new Intent(this, OverlayService.class));
-        stopService(new Intent(this, LiveCaptureService.class));
+        stopEverythingSilently();
         openGameAfterCapture = openGame;
-
         MediaProjectionManager manager =
                 (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
         try {
-            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_LIVE_CAPTURE);
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CAPTURE);
         } catch (RuntimeException error) {
             Toast.makeText(this,
                     "Could not open screen-capture permission: "
@@ -173,7 +157,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_LIVE_CAPTURE) {
+        if (requestCode != REQUEST_CAPTURE) {
             return;
         }
         if (resultCode != RESULT_OK || data == null) {
@@ -181,22 +165,22 @@ public class MainActivity extends Activity {
             return;
         }
 
-        Intent service = new Intent(this, LiveCaptureService.class);
-        service.putExtra(LiveCaptureService.EXTRA_RESULT_CODE, resultCode);
-        service.putExtra(LiveCaptureService.EXTRA_RESULT_DATA, data);
+        Intent service = new Intent(this, IconCaptureService.class);
+        service.putExtra(IconCaptureService.EXTRA_RESULT_CODE, resultCode);
+        service.putExtra(IconCaptureService.EXTRA_RESULT_DATA, data);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(service);
             } else {
                 startService(service);
             }
-            Toast.makeText(this, "Live practice analyzer started", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Icon vision started", Toast.LENGTH_SHORT).show();
             if (openGameAfterCapture) {
                 getWindow().getDecorView().postDelayed(this::openClashRoyale, 450L);
             }
         } catch (RuntimeException error) {
             Toast.makeText(this,
-                    "Could not start live mode: " + error.getClass().getSimpleName(),
+                    "Could not start icon vision: " + error.getClass().getSimpleName(),
                     Toast.LENGTH_LONG).show();
         }
     }
@@ -208,7 +192,7 @@ public class MainActivity extends Activity {
             requestOverlayPermission();
             return;
         }
-        stopService(new Intent(this, LiveCaptureService.class));
+        stopEverythingSilently();
         Intent service = new Intent(this, OverlayService.class);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -225,9 +209,14 @@ public class MainActivity extends Activity {
     }
 
     private void stopEverything() {
+        stopEverythingSilently();
+        Toast.makeText(this, "All Elixir Collector services stopped", Toast.LENGTH_SHORT).show();
+    }
+
+    private void stopEverythingSilently() {
         stopService(new Intent(this, OverlayService.class));
         stopService(new Intent(this, LiveCaptureService.class));
-        Toast.makeText(this, "All Elixir Collector services stopped", Toast.LENGTH_SHORT).show();
+        stopService(new Intent(this, IconCaptureService.class));
     }
 
     private void requestOverlayPermission() {
