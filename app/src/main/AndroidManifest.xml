@@ -19,13 +19,17 @@
         android:theme="@style/AppTheme">
 
         <activity
-            android:name=".MainActivity"
+            android:name=".IconMainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
 
         <service
             android:name=".OverlayService"
@@ -39,6 +43,12 @@
 
         <service
             android:name=".LiveCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection"
+            android:stopWithTask="false" />
+
+        <service
+            android:name=".IconCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection"
             android:stopWithTask="false" />
