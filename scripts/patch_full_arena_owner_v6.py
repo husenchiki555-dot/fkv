@@ -5,11 +5,17 @@ text = SOURCE.read_text(encoding="utf-8")
 
 
 def replace_once(old: str, new: str) -> None:
+    replace_expected(old, new, 1)
+
+
+def replace_expected(old: str, new: str, expected: int) -> None:
     global text
     count = text.count(old)
-    if count != 1:
-        raise RuntimeError(f"Expected exactly one Java match, found {count}: {old[:120]!r}")
-    text = text.replace(old, new, 1)
+    if count != expected:
+        raise RuntimeError(
+            f"Expected {expected} Java matches, found {count}: {old[:120]!r}"
+        )
+    text = text.replace(old, new)
 
 
 replace_once(
@@ -50,7 +56,7 @@ replace_once(
     "                iconTracks.clear();"
 )
 
-replace_once(
+replace_expected(
     "        lastAutomaticSpendAtMs = 0L;\n"
     "        iconTracks.clear();\n"
     "        previousArenaGray = null;",
@@ -58,16 +64,8 @@ replace_once(
     "        lastHandChangeAtMs = 0L;\n"
     "        previousHandGray = null;\n"
     "        iconTracks.clear();\n"
-    "        previousArenaGray = null;"
-)
-
-replace_once(
-    "        lastAutomaticSpendAtMs = 0L;\n"
-    "        iconTracks.clear();",
-    "        lastAutomaticSpendAtMs = 0L;\n"
-    "        lastHandChangeAtMs = 0L;\n"
-    "        previousHandGray = null;\n"
-    "        iconTracks.clear();"
+    "        previousArenaGray = null;",
+    2
 )
 
 replace_once(
