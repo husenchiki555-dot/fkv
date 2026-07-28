@@ -2,7 +2,7 @@ name: Build and install-test Android APK
 
 on:
   push:
-    branches: [ main, icon-vision-v4, opponent-only-v5 ]
+    branches: [ main, icon-vision-v4, opponent-only-v5, full-arena-owner-v6 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -15,8 +15,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Apply opponent-only safety patch
+      - name: Apply opponent-only safety base
         run: python3 scripts/patch_opponent_only_v5.py
+
+      - name: Apply full-arena ownership filter
+        run: python3 scripts/patch_full_arena_owner_v6.py
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -42,19 +45,19 @@ jobs:
         run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk ElixirCollector-OpponentOnly-v5.apk
+        run: cp app/build/outputs/apk/release/app-release.apk ElixirCollector-FullArena-v6.apk
 
       - name: Verify APK package and signatures
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging ElixirCollector-OpponentOnly-v5.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 ElixirCollector-OpponentOnly-v5.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ElixirCollector-OpponentOnly-v5.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging ElixirCollector-FullArena-v6.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 ElixirCollector-FullArena-v6.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ElixirCollector-FullArena-v6.apk
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: ElixirCollector-OpponentOnly-v5-APK
-          path: ElixirCollector-OpponentOnly-v5.apk
+          name: ElixirCollector-FullArena-v6-APK
+          path: ElixirCollector-FullArena-v6.apk
           if-no-files-found: error
 
       - name: Install and launch on Android 15 emulator
@@ -67,6 +70,6 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r ElixirCollector-OpponentOnly-v5.apk
+            adb install -r ElixirCollector-FullArena-v6.apk
             adb shell am start -W -n com.huseyn.elixircollector/.IconMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
