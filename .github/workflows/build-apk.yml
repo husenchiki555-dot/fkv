@@ -2,7 +2,7 @@ name: Build and install-test Android APK
 
 on:
   push:
-    branches: [ main, icon-vision-v4, opponent-only-v5, full-arena-owner-v6, evidence-fusion-v7 ]
+    branches: [ main, icon-vision-v4, opponent-only-v5, full-arena-owner-v6, evidence-fusion-v7, stability-safe-v8 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -23,6 +23,9 @@ jobs:
 
       - name: Apply player-evidence fusion
         run: python3 scripts/patch_evidence_fusion_v7.py
+
+      - name: Apply conservative stability safeguards
+        run: python3 scripts/patch_stability_safe_v8.py
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -48,19 +51,19 @@ jobs:
         run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk ElixirCollector-EvidenceFusion-v7.apk
+        run: cp app/build/outputs/apk/release/app-release.apk ElixirCollector-StabilitySafe-v8.apk
 
       - name: Verify APK package and signatures
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging ElixirCollector-EvidenceFusion-v7.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 ElixirCollector-EvidenceFusion-v7.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ElixirCollector-EvidenceFusion-v7.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging ElixirCollector-StabilitySafe-v8.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 ElixirCollector-StabilitySafe-v8.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs ElixirCollector-StabilitySafe-v8.apk
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: ElixirCollector-EvidenceFusion-v7-APK
-          path: ElixirCollector-EvidenceFusion-v7.apk
+          name: ElixirCollector-StabilitySafe-v8-APK
+          path: ElixirCollector-StabilitySafe-v8.apk
           if-no-files-found: error
 
       - name: Install and launch on Android 15 emulator
@@ -73,6 +76,6 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r ElixirCollector-EvidenceFusion-v7.apk
+            adb install -r ElixirCollector-StabilitySafe-v8.apk
             adb shell am start -W -n com.huseyn.elixircollector/.IconMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
