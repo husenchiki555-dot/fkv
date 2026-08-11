@@ -1,10 +1,8 @@
-name: Build RoyaleVision Manual APK
+name: Build RoyaleVision Auto v5 APK
 
 on:
   push:
-    branches: [ main, redesign-v2, compact-v3, royalevision-manual-v4 ]
-  pull_request:
-    branches: [ main ]
+    branches: [ royalevision-auto-v5-final5 ]
   workflow_dispatch:
 
 jobs:
@@ -39,19 +37,19 @@ jobs:
         run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Manual-v4.apk
+        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.apk
 
       - name: Verify APK package and signatures
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Manual-v4.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Manual-v4.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Manual-v4.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.apk
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: RoyaleVision-Manual-v4-APK
-          path: RoyaleVision-Manual-v4.apk
+          name: RoyaleVision-Auto-v5-APK
+          path: RoyaleVision-Auto-v5.apk
           if-no-files-found: error
 
       - name: Install and launch on Android 15 emulator
@@ -64,6 +62,6 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r RoyaleVision-Manual-v4.apk
-            adb shell am start -W -n com.huseyn.elixircollector/.MainActivity
+            adb install -r RoyaleVision-Auto-v5.apk
+            adb shell am start -W -n com.huseyn.elixircollector/.AutoMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
