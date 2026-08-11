@@ -1,8 +1,8 @@
-name: Build RoyaleVision Auto v5.3 APK
+name: Build RoyaleVision Auto v5.4 APK
 
 on:
   push:
-    branches: [ royalevision-auto-v5-3-footage-fix ]
+    branches: [ royalevision-auto-v5-4-match-detect ]
   workflow_dispatch:
 
 jobs:
@@ -13,12 +13,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Apply footage-driven v5.3 fixes
+      - name: Apply v5.3 safety fixes
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          # 1) Never restore/show stale opponent Elixir when there is no live match.
           p = Path('app/src/main/java/com/huseyn/elixircollector/AutoOverlayService.java')
           s = p.read_text()
           old = '@Override public void onCreate(){super.onCreate();cv=getSharedPreferences(AutoCaptureService.PREFS,MODE_PRIVATE);createChannel();restoreState();}'
@@ -32,7 +31,6 @@ jobs:
           s = s.replace('RoyaleVision Auto v5.2', 'RoyaleVision Auto v5.3')
           p.write_text(s)
 
-          # 2) Fresh Start always kills the previous overlay instance before a new projection.
           p = Path('app/src/main/java/com/huseyn/elixircollector/AutoMainActivity.java')
           s = p.read_text()
           old = 'private void beginCapture(){startOverlayService();MediaProjectionManager m=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);startActivityForResult(m.createScreenCaptureIntent(),REQ_CAPTURE);}'
@@ -43,7 +41,6 @@ jobs:
           s = s.replace('so v5.2 keeps', 'so v5.3 keeps')
           p.write_text(s)
 
-          # 3) Do not let an audio/microphone foreground-service restriction kill visual tracking.
           p = Path('app/src/main/java/com/huseyn/elixircollector/AutoCaptureService.java')
           s = p.read_text()
           old = 'private static final String CHANNEL="royalevision_auto_capture";private static final int NOTIFICATION_ID=9505;private static final long ANALYZE_EVERY_NS=80_000_000L;private static final int START_STABLE_FRAMES=8,END_MISSING_FRAMES=30;'
@@ -54,13 +51,10 @@ jobs:
           new = '''private void startCaptureForeground(){Notification n=buildNotification();if(Build.VERSION.SDK_INT>=29){try{startForeground(NOTIFICATION_ID,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION|ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);}catch(RuntimeException audioFgsError){prefs.edit().putBoolean(K_AUDIO_AVAILABLE,false).putString(K_STATUS,"AUDIO DISABLED • VISUAL TRACKING ACTIVE").apply();startForeground(NOTIFICATION_ID,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);}}else startForeground(NOTIFICATION_ID,n);}'''
           assert old in s
           s = s.replace(old, new)
-
           old = 'boolean reliable=r.battleHud&&!Double.isNaN(r.localElixir)&&r.localElixir>=0.35&&r.elixirConfidence>=0.34;'
           new = '''int recognizedHand=0;if(hand!=null){for(int i=0;i<hand.slotIds.length;i++)if(hand.slotIds[i]!=null&&hand.confidence[i]>=0.45)recognizedHand++;}boolean reliable=r.battleHud&&!Double.isNaN(r.localElixir)&&r.localElixir>=0.35&&r.elixirConfidence>=0.34&&recognizedHand>=2;'''
           assert old in s
           s = s.replace(old, new)
-
-          # Clear stale enemy evidence every new capture session.
           old = 'clearLiveDetectionState();handRecognizer.reloadDeck();'
           new = 'clearLiveDetectionState();handRecognizer.reloadDeck();prefs.edit().remove(K_ENEMY_EVENT_MS).remove(K_ENEMY_COST).remove(K_ENEMY_CARD_ID).remove(K_ENEMY_CONF).remove(K_LOCAL_CARD_ID).putBoolean(K_MATCH,false).remove(K_LOCAL_ELIXIR).apply();'
           assert old in s
@@ -68,9 +62,237 @@ jobs:
           s = s.replace('RoyaleVision Auto v5.2', 'RoyaleVision Auto v5.3')
           p.write_text(s)
 
-          # 4) Version bump.
           p = Path('app/build.gradle')
           s = p.read_text().replace("versionCode 521", "versionCode 530").replace("versionName '5.2.1'", "versionName '5.3.0'")
+          p.write_text(s)
+          PY
+
+      - name: Apply adaptive v5.4 match detector
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # FrameAnalyzer: do not require one exact screen geometry to recognize a battle.
+          p = Path('app/src/main/java/com/huseyn/elixircollector/FrameAnalyzer.java')
+          s = p.read_text()
+          s = s.replace('        public double handTexture;\n', '        public double handTexture;\n        public int handValidSlots;\n        public double hudPurpleScore;\n')
+          s = s.replace('        out.handTexture = hr.texture;\n', '        out.handTexture = hr.texture;\n        out.handValidSlots = hr.validSlots;\n        out.hudPurpleScore = readBroadPurpleScore(p, w, h);\n')
+          old = '''        // Deliberately strict. The old build accepted purple card-cost circles as
+        // an Elixir bar, then started a false match at ~0.0 Elixir.
+        out.battleHud = !Double.isNaN(er.value)
+                && er.value >= 0.45
+                && er.confidence >= 0.42
+                && er.geometryScore >= 0.45
+                && hr.texture >= 0.045
+                && hr.validSlots >= 3;
+'''
+          new = '''        // v5.3 was too strict: one missed fixed Elixir ROI or two uncertain hand
+        // identities kept a real match in SEARCHING forever. v5.4 treats the
+        // four-card hand layout as the primary battle-HUD cue and uses either a
+        // readable Elixir rail or broader purple HUD support as corroboration.
+        boolean handLooksLikeBattle = hr.texture >= 0.030 && hr.validSlots >= 3;
+        boolean strongElixir = !Double.isNaN(er.value)
+                && er.confidence >= 0.18 && er.geometryScore >= 0.10;
+        boolean purpleSupport = out.hudPurpleScore >= 0.030;
+        out.battleHud = handLooksLikeBattle && (strongElixir || purpleSupport || handInitialized);
+'''
+          assert old in s
+          s = s.replace(old, new)
+
+          old_profiles = '''        double[][] profiles = {
+                {0.30, 0.905, 0.905, 0.992},
+                {0.34, 0.915, 0.905, 0.992},
+                {0.37, 0.900, 0.900, 0.992}
+        };
+'''
+          new_profiles = '''        double[][] profiles = {
+                {0.18, 0.96, 0.835, 0.985},
+                {0.22, 0.96, 0.855, 0.985},
+                {0.26, 0.96, 0.875, 0.990},
+                {0.30, 0.95, 0.895, 0.992},
+                {0.34, 0.94, 0.905, 0.992},
+                {0.18, 0.90, 0.855, 0.970},
+                {0.24, 0.92, 0.875, 0.980},
+                {0.30, 0.92, 0.885, 0.985}
+        };
+'''
+          assert old_profiles in s
+          s = s.replace(old_profiles, new_profiles)
+          s = s.replace('                if (gap > 3) {', '                if (gap > Math.max(4, columns / 55)) {')
+          s = s.replace('        if (startFrac > 0.24 || runFrac < 0.035) {', '        if (startFrac > 0.38 || runFrac < 0.018) {')
+          s = s.replace('        double leftAnchor = 1.0 - clamp(startFrac / 0.24, 0.0, 1.0);', '        double leftAnchor = 1.0 - clamp(startFrac / 0.38, 0.0, 1.0);')
+          s = s.replace('        double longRun = clamp(runFrac / 0.28, 0.0, 1.0);', '        double longRun = clamp(runFrac / 0.22, 0.0, 1.0);')
+
+          marker = '    private ElixirReading readElixir(PlaneReader p, int w, int h) {'
+          broad = '''    private double readBroadPurpleScore(PlaneReader p, int w, int h) {
+        int x0=(int)(w*0.12), x1=(int)(w*0.96), y0=(int)(h*0.74), y1=(int)(h*0.985);
+        int sx=Math.max(3,w/220), sy=Math.max(3,h/260); double best=0.0;
+        for(int y=y0;y<y1;y+=sy){int purple=0,total=0;for(int x=x0;x<x1;x+=sx){if(isElixirPurple(p.rgb(x,y)))purple++;total++;}best=Math.max(best,purple/(double)Math.max(1,total));}
+        return best;
+    }
+
+'''
+          assert marker in s
+          s = s.replace(marker, broad + marker, 1)
+
+          start = s.index('    private HandReading readHand(PlaneReader p, int w, int h) {')
+          end = s.index('    private ArenaReading readArena(PlaneReader p, int w, int h) {', start)
+          new_hand = '''    private HandReading readHand(PlaneReader p, int w, int h) {
+        // Search several nearby layouts instead of assuming one 1080x2400 crop.
+        double[] tops={0.700,0.725,0.750,0.775,0.800,0.825};
+        double[] shifts={-0.045,-0.022,0.0,0.022,0.045};
+        HandReading best=null; double bestScore=-1;
+        for(double top:tops) for(double shift:shifts){
+            HandReading r=readHandAt(p,w,h,top,shift);
+            double score=r.validSlots*1.0+r.texture*3.0;
+            if(score>bestScore){bestScore=score;best=r;}
+        }
+        return best==null?readHandAt(p,w,h,0.760,0.0):best;
+    }
+
+    private HandReading readHandAt(PlaneReader p,int w,int h,double top,double shift){
+        double[] centers={0.370+shift,0.515+shift,0.660+shift,0.805+shift};
+        double bottom=Math.min(0.955,top+0.135);
+        double[][] hashes=new double[HAND_SLOTS][HASH_VALUES];double textureSum=0,maxDelta=0;int changedSlots=0,validSlots=0;
+        for(int slot=0;slot<HAND_SLOTS;slot++){
+            double cx=centers[slot],left=cx-0.057,right=cx+0.057;int pos=0,count=0;double mean=0,meanSq=0;
+            for(int gy=0;gy<HASH_H;gy++)for(int gx=0;gx<HASH_W;gx++){
+                int x=(int)(w*(left+(gx+0.5)/HASH_W*(right-left)));int y=(int)(h*(top+(gy+0.5)/HASH_H*(bottom-top)));
+                int rgb=p.rgb(clamp(x,0,w-1),clamp(y,0,h-1));double rr=((rgb>>16)&255)/255.0,gg=((rgb>>8)&255)/255.0,bb=(rgb&255)/255.0;
+                hashes[slot][pos++]=rr;hashes[slot][pos++]=gg;hashes[slot][pos++]=bb;double lum=(rr+gg+bb)/3.0;mean+=lum;meanSq+=lum*lum;count++;
+            }
+            mean/=Math.max(1,count);meanSq/=Math.max(1,count);double texture=Math.sqrt(Math.max(0,meanSq-mean*mean));textureSum+=texture;if(texture>=0.028)validSlots++;
+            if(handInitialized){double delta=0;for(int i=0;i<HASH_VALUES;i++)delta+=Math.abs(hashes[slot][i]-previousHand[slot][i]);delta/=HASH_VALUES;if(delta>=0.115)changedSlots++;maxDelta=Math.max(maxDelta,delta);}
+        }
+        return new HandReading(hashes,textureSum/HAND_SLOTS,maxDelta,changedSlots,validSlots);
+    }
+
+'''
+          s = s[:start] + new_hand + s[end:]
+
+          old_purple = '''        return r >= 78 && b >= 100 && max >= 118
+                && g <= 178
+                && r > g * 1.02
+                && b > g * 1.04
+                && (r + b - 2 * g) > 34;'''
+          new_purple = '''        return r >= 68 && b >= 88 && max >= 104
+                && g <= 192
+                && r > g * 0.98
+                && b > g * 1.00
+                && (r + b - 2 * g) > 24;'''
+          assert old_purple in s
+          s = s.replace(old_purple,new_purple)
+          p.write_text(s)
+
+          # Calibrated hand recognizer: search around the live hand region too.
+          p = Path('app/src/main/java/com/huseyn/elixircollector/HandCardRecognizer.java')
+          s = p.read_text()
+          start = s.index('    public Result recognize(Image image){')
+          end = s.index('    public static String inferPlayedCard', start)
+          method = '''    public Result recognize(Image image){
+        String[] empty={null,null,null,null};double[] emptyC={0,0,0,0};
+        if(image==null||image.getPlanes().length==0||deck.size()!=8||refs.size()<5)return new Result(empty,emptyC);
+        Frame f=new Frame(image);if(!f.valid())return new Result(empty,emptyC);
+        double[] tops={0.700,0.730,0.760,0.790,0.820};double[] shifts={-0.040,-0.020,0.0,0.020,0.040};
+        Result bestResult=new Result(empty,emptyC);double bestScore=-1;
+        for(double top:tops)for(double shift:shifts){Result r=recognizeAt(f,top,shift);double score=0;for(int i=0;i<4;i++)score+=r.confidence[i]+(r.slotIds[i]!=null?0.35:0);if(score>bestScore){bestScore=score;bestResult=r;}}
+        return bestResult;
+    }
+
+    private Result recognizeAt(Frame f,double top,double shift){
+        String[] ids={null,null,null,null};double[] conf={0,0,0,0};double[] centers={0.365+shift,0.515+shift,0.665+shift,0.815+shift};double bottom=Math.min(0.930,top+0.105);
+        for(int s=0;s<4;s++){
+            double[] q=featureFrame(f,centers[s]-0.050,top,centers[s]+0.050,bottom);String bestId=null;double best=Double.POSITIVE_INFINITY,second=Double.POSITIVE_INFINITY;
+            for(String id:deck){List<double[]> variants=refs.get(id);if(variants==null)continue;double cardBest=Double.POSITIVE_INFINITY;for(double[] r:variants)cardBest=Math.min(cardBest,distance(q,r));double d=cardBest;if(d<best){second=best;best=d;bestId=id;}else if(d<second)second=d;}
+            double margin=Math.max(0.0,second-best);double c=clamp(1.0-best/0.50,0,1)*0.70+clamp(margin/0.09,0,1)*0.30;if(bestId!=null&&c>=0.43){ids[s]=bestId;conf[s]=c;}
+        }
+        return new Result(ids,conf);
+    }
+
+'''
+          s = s[:start] + method + s[end:]
+          p.write_text(s)
+
+          # Capture service: a match can be found from the battle hand/HUD even if
+          # the exact Elixir rail is still calibrating. Elixir anchors only when
+          # there is an actual usable reading.
+          p = Path('app/src/main/java/com/huseyn/elixircollector/AutoCaptureService.java')
+          s = p.read_text()
+          s = s.replace('private static final int START_STABLE_FRAMES=12,END_MISSING_FRAMES=30;', 'private static final int START_STABLE_FRAMES=6,END_MISSING_FRAMES=36;')
+          start = s.index('    private void updateFromResult(FrameAnalyzer.Result r,HandCardRecognizer.Result hand,long nowMs){')
+          end = s.index('    private AudioEvidenceEngine.Fingerprint nearAudio', start)
+          func = '''    private void updateFromResult(FrameAnalyzer.Result r,HandCardRecognizer.Result hand,long nowMs){
+        int recognizedHand=0;if(hand!=null)for(int i=0;i<hand.slotIds.length;i++)if(hand.slotIds[i]!=null&&hand.confidence[i]>=0.43)recognizedHand++;
+        boolean hudReliable=r.battleHud&&r.handValidSlots>=3&&r.handTexture>=0.028;
+        boolean elixirUsable=!Double.isNaN(r.localElixir)&&r.elixirConfidence>=0.18&&r.elixirGeometryScore>=0.10;
+
+        if(hudReliable){
+            if(hudStableFrames==0)firstHudMs=nowMs;hudStableFrames++;hudMissingFrames=0;
+            if(elixirUsable){if(Double.isNaN(smoothedElixir))smoothedElixir=r.localElixir;else{double a=r.localElixir<smoothedElixir-0.45?0.72:0.30;smoothedElixir=smoothedElixir*(1-a)+r.localElixir*a;}smoothedConfidence=smoothedConfidence*0.65+r.elixirConfidence*0.35;stableMaxElixir=Double.isNaN(stableMaxElixir)?smoothedElixir:Math.max(stableMaxElixir,smoothedElixir);}
+        }else{
+            hudMissingFrames++;
+            if(!matchActive){hudStableFrames=Math.max(0,hudStableFrames-1);if(hudStableFrames==0){firstHudMs=0;stableMaxElixir=Double.NaN;smoothedElixir=Double.NaN;smoothedConfidence=0;}}
+        }
+
+        if(!matchActive&&hudStableFrames>=START_STABLE_FRAMES){
+            matchActive=true;int session=prefs.getInt(K_SESSION,0)+1;long clockStart=firstHudMs>0?firstHudMs:nowMs;audioProfiles.clear();lastEnemyEventMs=0;
+            SharedPreferences.Editor se=prefs.edit().putInt(K_SESSION,session).putLong(K_MATCH_CLOCK_START_MS,clockStart).putBoolean(K_MATCH,true);
+            if(!Double.isNaN(stableMaxElixir)){double anchor=Math.max(0,Math.min(10,stableMaxElixir));se.putLong(K_MATCH_ANCHOR_MS,nowMs).putFloat(K_MATCH_ANCHOR_ELIXIR,(float)anchor);}else se.remove(K_MATCH_ANCHOR_MS).remove(K_MATCH_ANCHOR_ELIXIR);
+            se.apply();
+        }else if(matchActive&&hudMissingFrames>=END_MISSING_FRAMES){
+            matchActive=false;analyzer.resetTemporalState();badgeDetector.reset();previousHand=null;hudStableFrames=hudMissingFrames=0;firstHudMs=0;stableMaxElixir=Double.NaN;smoothedElixir=Double.NaN;smoothedConfidence=0;audioProfiles.clear();
+        }
+
+        // If the battle was found from the hand first, allow the Elixir detector a
+        // short opening window to establish the opponent timebase. Never invent a value.
+        if(matchActive&&elixirUsable&&!prefs.contains(K_MATCH_ANCHOR_ELIXIR)){
+            long clockStart=prefs.getLong(K_MATCH_CLOCK_START_MS,nowMs);long lastLocal=prefs.getLong(K_LOCAL_PLAY_MS,0);long lastEnemy=prefs.getLong(K_ENEMY_EVENT_MS,0);
+            if(nowMs-clockStart<=6000&&lastLocal<clockStart&&lastEnemy<clockStart){prefs.edit().putLong(K_MATCH_ANCHOR_MS,nowMs).putFloat(K_MATCH_ANCHOR_ELIXIR,(float)Math.max(0,Math.min(10,smoothedElixir))).apply();}
+        }
+
+        SharedPreferences.Editor e=prefs.edit().putBoolean(K_CAPTURE,true).putBoolean(K_MATCH,matchActive).putFloat(K_ELIXIR_CONF,(float)smoothedConfidence).putFloat(K_ARENA_CHANGE,(float)r.arenaChange).putString(K_HINT,r.effectHint==null?"":r.effectHint);
+        if(matchActive&&!Double.isNaN(smoothedElixir))e.putFloat(K_LOCAL_ELIXIR,(float)smoothedElixir);else if(!matchActive)e.remove(K_LOCAL_ELIXIR);
+
+        String localCard=null;
+        if(r.handChanged&&matchActive)e.putLong(K_HAND_CHANGE_MS,nowMs);
+        if(r.localPlay&&matchActive){e.putLong(K_LOCAL_PLAY_MS,nowMs);localCard=HandCardRecognizer.inferPlayedCard(previousHand,hand);if(localCard!=null){e.putString(K_LOCAL_CARD_ID,localCard);AudioEvidenceEngine.Fingerprint a=nearAudio(nowMs,850);if(a!=null)audioProfiles.learn(localCard,a);}}
+        if(r.localAbilitySpend&&matchActive)e.putLong(K_LOCAL_ABILITY_MS,nowMs);
+
+        boolean emitted=false;int enemyCost=0;String enemyCard=null;double enemyConf=0;
+        if(r.enemyCandidate&&matchActive&&nowMs-lastEnemyEventMs>800){e.putLong(K_ENEMY_CANDIDATE_MS,nowMs);CostBadgeDetector.Detection b=latestBadge;boolean badgeNear=b!=null&&Math.abs(nowMs-b.timeMs)<=850&&b.confidence>=0.58;AudioEvidenceEngine.Fingerprint a=nearAudio(nowMs,700);boolean audioNear=a!=null;if(badgeNear){enemyCost=b.cost;enemyConf=0.62+Math.min(0.25,b.confidence*0.22)+(audioNear?0.10:0);enemyCard=audioProfiles.match(a,enemyCost);if(enemyCard!=null)enemyConf=Math.max(enemyConf,0.88);emitted=true;}}
+        if(emitted){lastEnemyEventMs=nowMs;e.putLong(K_ENEMY_EVENT_MS,nowMs).putInt(K_ENEMY_COST,enemyCost).putFloat(K_ENEMY_CONF,(float)Math.min(0.99,enemyConf));if(enemyCard!=null)e.putString(K_ENEMY_CARD_ID,enemyCard);else e.remove(K_ENEMY_CARD_ID);}
+
+        String status;
+        if(!matchActive)status="SEARCH • HAND "+r.handValidSlots+"/4 • CAL "+recognizedHand+" • E "+(elixirUsable?"OK":"?")+" • P "+Math.round(r.hudPurpleScore*100);
+        else if(!prefs.contains(K_MATCH_ANCHOR_ELIXIR))status="MATCH FOUND • CALIBRATING ELIXIR";
+        else if(r.localPlay)status=localCard==null?"YOUR PLAY • HAND+ELIXIR":"YOUR "+localCard.toUpperCase()+" • LEARNING SOUND";
+        else if(emitted)status=enemyCard==null?"AUTO ENEMY SPEND −"+enemyCost:"AUTO ENEMY "+enemyCard.toUpperCase();
+        else if(r.enemyCandidate)status="ENEMY CANDIDATE • WAITING FOR COST";
+        else status=prefs.getBoolean(K_AUDIO_AVAILABLE,false)?"AUTO WATCHING • SOUND+HAND+VISION":"AUTO WATCHING • HAND+VISION";
+        e.putString(K_STATUS,status).apply();
+    }
+
+'''
+          s = s[:start] + func + s[end:]
+          s = s.replace('RoyaleVision Auto v5.3', 'RoyaleVision Auto v5.4')
+          p.write_text(s)
+
+          # Overlay: visibly distinguish a found match whose Elixir timebase is still calibrating.
+          p = Path('app/src/main/java/com/huseyn/elixircollector/AutoOverlayService.java')
+          s = p.read_text()
+          old = 'else statusText.setText((audio?"SOUND+":"")+"HAND+VISION • YOU "+(Double.isNaN(local)?"?":String.format(Locale.US,"%.1f",local)));'
+          new = 'else if(!state.isStarted())statusText.setText("MATCH FOUND • ELIXIR CAL");else statusText.setText((audio?"SOUND+":"")+"HAND+VISION • YOU "+(Double.isNaN(local)?"?":String.format(Locale.US,"%.1f",local)));'
+          assert old in s
+          s = s.replace(old,new)
+          s = s.replace('RoyaleVision Auto v5.3', 'RoyaleVision Auto v5.4')
+          p.write_text(s)
+
+          p = Path('app/src/main/java/com/huseyn/elixircollector/AutoMainActivity.java')
+          s = p.read_text().replace('ROYALEVISION AUTO v5.3','ROYALEVISION AUTO v5.4').replace('so v5.3 keeps','so v5.4 keeps')
+          p.write_text(s)
+
+          p = Path('app/build.gradle')
+          s = p.read_text().replace('versionCode 530','versionCode 540').replace("versionName '5.3.0'","versionName '5.4.0'")
           p.write_text(s)
           PY
 
@@ -109,20 +331,20 @@ jobs:
         run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.3.apk
+        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.4.apk
 
       - name: Verify APK
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.3.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.3.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.3.apk
-          unzip -l RoyaleVision-Auto-v5.3.apk | grep -q 'assets/cards/hog-rider.png'
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.4.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.4.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.4.apk
+          unzip -l RoyaleVision-Auto-v5.4.apk | grep -q 'assets/cards/hog-rider.png'
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: RoyaleVision-Auto-v5.3-APK
-          path: RoyaleVision-Auto-v5.3.apk
+          name: RoyaleVision-Auto-v5.4-APK
+          path: RoyaleVision-Auto-v5.4.apk
           if-no-files-found: error
 
       - name: Install and launch on Android 15 emulator
@@ -135,6 +357,6 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r RoyaleVision-Auto-v5.3.apk
+            adb install -r RoyaleVision-Auto-v5.4.apk
             adb shell am start -W -n com.huseyn.elixircollector/.AutoMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
