@@ -1,8 +1,8 @@
-name: Build RoyaleVision Auto v5 APK
+name: Build RoyaleVision Auto v5.1 APK
 
 on:
   push:
-    branches: [ royalevision-auto-v5-final5 ]
+    branches: [ royalevision-auto-v5-1-bugfix ]
   workflow_dispatch:
 
 jobs:
@@ -37,19 +37,19 @@ jobs:
         run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.apk
+        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.1.apk
 
       - name: Verify APK package and signatures
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.1.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.1.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.1.apk
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: RoyaleVision-Auto-v5-APK
-          path: RoyaleVision-Auto-v5.apk
+          name: RoyaleVision-Auto-v5.1-APK
+          path: RoyaleVision-Auto-v5.1.apk
           if-no-files-found: error
 
       - name: Install and launch on Android 15 emulator
@@ -62,6 +62,6 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r RoyaleVision-Auto-v5.apk
+            adb install -r RoyaleVision-Auto-v5.1.apk
             adb shell am start -W -n com.huseyn.elixircollector/.AutoMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
