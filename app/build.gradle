@@ -10,8 +10,10 @@ android {
         applicationId 'com.huseyn.elixircollector'
         minSdk 23
         targetSdk 35
-        versionCode 521
-        versionName '5.2.1'
+        versionCode 600
+        versionName '6.0.0'
+
+        testInstrumentationRunner 'android.app.InstrumentationTestRunner'
     }
 
     signingConfigs {
@@ -44,4 +46,12 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
 }
