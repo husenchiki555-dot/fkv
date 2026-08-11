@@ -12,8 +12,8 @@ import java.util.Map;
 
 /**
  * Very small on-device hand recognizer restricted to the user's calibrated 8-card deck.
- * It compares low-resolution color features from each live hand slot with bundled card art.
- * This is only supporting evidence; low-confidence matches remain UNKNOWN.
+ * Evo/Hero calibration adds the corresponding special artwork as an additional reference.
+ * Low-confidence matches remain UNKNOWN.
  */
 public final class HandCardRecognizer {
     public static final class Result {
@@ -24,7 +24,7 @@ public final class HandCardRecognizer {
 
     private static final int GW=5, GH=6, FV=GW*GH*3;
     private final Context context;
-    private final Map<String,double[]> refs=new HashMap<>();
+    private final Map<String,List<double[]>> refs=new HashMap<>();
     private List<String> deck=new ArrayList<>();
 
     public HandCardRecognizer(Context context){this.context=context.getApplicationContext();reloadDeck();}
@@ -33,8 +33,16 @@ public final class HandCardRecognizer {
         deck=DeckCalibrationActivity.loadDeck(context);
         refs.clear();
         for(String id:deck){
-            Bitmap b=CardIconLoader.load(context,id);
-            if(b!=null) refs.put(id,featureBitmap(b));
+            ArrayList<double[]> variants=new ArrayList<>();
+            Bitmap base=CardIconLoader.load(context,id);
+            if(base!=null) variants.add(featureBitmap(base));
+
+            SpecialFormCalibration.Form form=SpecialFormCalibration.get(context,id);
+            if(form!=SpecialFormCalibration.Form.NORMAL) {
+                Bitmap special=CardIconLoader.loadForm(context,id,form);
+                if(special!=null && special!=base) variants.add(featureBitmap(special));
+            }
+            if(!variants.isEmpty()) refs.put(id,variants);
         }
     }
 
@@ -48,8 +56,10 @@ public final class HandCardRecognizer {
             double[] q=featureFrame(f,centers[s]-0.047,0.765,centers[s]+0.047,0.855);
             String bestId=null; double best=Double.POSITIVE_INFINITY,second=Double.POSITIVE_INFINITY;
             for(String id:deck){
-                double[] r=refs.get(id); if(r==null)continue;
-                double d=distance(q,r);
+                List<double[]> variants=refs.get(id); if(variants==null)continue;
+                double cardBest=Double.POSITIVE_INFINITY;
+                for(double[] r:variants) cardBest=Math.min(cardBest,distance(q,r));
+                double d=cardBest;
                 if(d<best){second=best;best=d;bestId=id;} else if(d<second)second=d;
             }
             double margin=Math.max(0.0,second-best);
