@@ -1,8 +1,8 @@
-name: Build RoyaleVision Auto v5.2.1 APK
+name: Build RoyaleVision Auto v5.3 APK
 
 on:
   push:
-    branches: [ royalevision-auto-v5-2-release2 ]
+    branches: [ royalevision-auto-v5-3-footage-fix ]
   workflow_dispatch:
 
 jobs:
@@ -12,6 +12,67 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Apply footage-driven v5.3 fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # 1) Never restore/show stale opponent Elixir when there is no live match.
+          p = Path('app/src/main/java/com/huseyn/elixircollector/AutoOverlayService.java')
+          s = p.read_text()
+          old = '@Override public void onCreate(){super.onCreate();cv=getSharedPreferences(AutoCaptureService.PREFS,MODE_PRIVATE);createChannel();restoreState();}'
+          new = '@Override public void onCreate(){super.onCreate();cv=getSharedPreferences(AutoCaptureService.PREFS,MODE_PRIVATE);createChannel();if(cv.getBoolean(AutoCaptureService.K_CAPTURE,false)&&cv.getBoolean(AutoCaptureService.K_MATCH,false))restoreState();else{state.reset();getSharedPreferences(STATE_PREFS,MODE_PRIVATE).edit().clear().apply();}}'
+          assert old in s
+          s = s.replace(old, new)
+          old = 'if(opponentText!=null)opponentText.setText(Double.isNaN(enemy)?"💧 ?":String.format(Locale.US,"💧 %.1f",enemy));'
+          new = 'if(opponentText!=null)opponentText.setText(!match||Double.isNaN(enemy)?"💧 ?":String.format(Locale.US,"💧 %.1f",enemy));'
+          assert old in s
+          s = s.replace(old, new)
+          s = s.replace('RoyaleVision Auto v5.2', 'RoyaleVision Auto v5.3')
+          p.write_text(s)
+
+          # 2) Fresh Start always kills the previous overlay instance before a new projection.
+          p = Path('app/src/main/java/com/huseyn/elixircollector/AutoMainActivity.java')
+          s = p.read_text()
+          old = 'private void beginCapture(){startOverlayService();MediaProjectionManager m=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);startActivityForResult(m.createScreenCaptureIntent(),REQ_CAPTURE);}'
+          new = 'private void beginCapture(){stopService(new Intent(this,AutoOverlayService.class));getSharedPreferences(AutoCaptureService.PREFS,MODE_PRIVATE).edit().putBoolean(AutoCaptureService.K_CAPTURE,false).putBoolean(AutoCaptureService.K_MATCH,false).remove(AutoCaptureService.K_LOCAL_ELIXIR).putString(AutoCaptureService.K_STATUS,"STARTING FRESH").apply();startOverlayService();MediaProjectionManager m=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);startActivityForResult(m.createScreenCaptureIntent(),REQ_CAPTURE);}'
+          assert old in s
+          s = s.replace(old, new)
+          s = s.replace('ROYALEVISION AUTO v5.2', 'ROYALEVISION AUTO v5.3')
+          s = s.replace('so v5.2 keeps', 'so v5.3 keeps')
+          p.write_text(s)
+
+          # 3) Do not let an audio/microphone foreground-service restriction kill visual tracking.
+          p = Path('app/src/main/java/com/huseyn/elixircollector/AutoCaptureService.java')
+          s = p.read_text()
+          old = 'private static final String CHANNEL="royalevision_auto_capture";private static final int NOTIFICATION_ID=9505;private static final long ANALYZE_EVERY_NS=80_000_000L;private static final int START_STABLE_FRAMES=8,END_MISSING_FRAMES=30;'
+          new = 'private static final String CHANNEL="royalevision_auto_capture";private static final int NOTIFICATION_ID=9505;private static final long ANALYZE_EVERY_NS=80_000_000L;private static final int START_STABLE_FRAMES=12,END_MISSING_FRAMES=30;'
+          assert old in s
+          s = s.replace(old, new)
+          old = 'private void startCaptureForeground(){Notification n=buildNotification();if(Build.VERSION.SDK_INT>=29)startForeground(NOTIFICATION_ID,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION|ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);else startForeground(NOTIFICATION_ID,n);}'
+          new = '''private void startCaptureForeground(){Notification n=buildNotification();if(Build.VERSION.SDK_INT>=29){try{startForeground(NOTIFICATION_ID,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION|ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);}catch(RuntimeException audioFgsError){prefs.edit().putBoolean(K_AUDIO_AVAILABLE,false).putString(K_STATUS,"AUDIO DISABLED • VISUAL TRACKING ACTIVE").apply();startForeground(NOTIFICATION_ID,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);}}else startForeground(NOTIFICATION_ID,n);}'''
+          assert old in s
+          s = s.replace(old, new)
+
+          old = 'boolean reliable=r.battleHud&&!Double.isNaN(r.localElixir)&&r.localElixir>=0.35&&r.elixirConfidence>=0.34;'
+          new = '''int recognizedHand=0;if(hand!=null){for(int i=0;i<hand.slotIds.length;i++)if(hand.slotIds[i]!=null&&hand.confidence[i]>=0.45)recognizedHand++;}boolean reliable=r.battleHud&&!Double.isNaN(r.localElixir)&&r.localElixir>=0.35&&r.elixirConfidence>=0.34&&recognizedHand>=2;'''
+          assert old in s
+          s = s.replace(old, new)
+
+          # Clear stale enemy evidence every new capture session.
+          old = 'clearLiveDetectionState();handRecognizer.reloadDeck();'
+          new = 'clearLiveDetectionState();handRecognizer.reloadDeck();prefs.edit().remove(K_ENEMY_EVENT_MS).remove(K_ENEMY_COST).remove(K_ENEMY_CARD_ID).remove(K_ENEMY_CONF).remove(K_LOCAL_CARD_ID).putBoolean(K_MATCH,false).remove(K_LOCAL_ELIXIR).apply();'
+          assert old in s
+          s = s.replace(old, new)
+          s = s.replace('RoyaleVision Auto v5.2', 'RoyaleVision Auto v5.3')
+          p.write_text(s)
+
+          # 4) Version bump.
+          p = Path('app/build.gradle')
+          s = p.read_text().replace("versionCode 521", "versionCode 530").replace("versionName '5.2.1'", "versionName '5.3.0'")
+          p.write_text(s)
+          PY
 
       - name: Bundle card artwork
         run: |
@@ -23,7 +84,6 @@ jobs:
           cp cards-75/*.png "$GITHUB_WORKSPACE/app/src/main/assets/cards/"
           test -f "$GITHUB_WORKSPACE/app/src/main/assets/cards/hog-rider.png"
           test -f "$GITHUB_WORKSPACE/app/src/main/assets/cards/knight-ev1.png"
-          echo "Bundled $(find "$GITHUB_WORKSPACE/app/src/main/assets/cards" -name '*.png' | wc -l) card images"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -49,21 +109,20 @@ jobs:
         run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.2.1.apk
+        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.3.apk
 
-      - name: Verify APK package signatures and bundled icons
+      - name: Verify APK
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.2.1.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.2.1.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.2.1.apk
-          unzip -l RoyaleVision-Auto-v5.2.1.apk | grep -q 'assets/cards/hog-rider.png'
-          unzip -l RoyaleVision-Auto-v5.2.1.apk | grep -q 'assets/cards/knight-ev1.png'
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.3.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.3.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.3.apk
+          unzip -l RoyaleVision-Auto-v5.3.apk | grep -q 'assets/cards/hog-rider.png'
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: RoyaleVision-Auto-v5.2.1-APK
-          path: RoyaleVision-Auto-v5.2.1.apk
+          name: RoyaleVision-Auto-v5.3-APK
+          path: RoyaleVision-Auto-v5.3.apk
           if-no-files-found: error
 
       - name: Install and launch on Android 15 emulator
@@ -76,6 +135,6 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r RoyaleVision-Auto-v5.2.1.apk
+            adb install -r RoyaleVision-Auto-v5.3.apk
             adb shell am start -W -n com.huseyn.elixircollector/.AutoMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
