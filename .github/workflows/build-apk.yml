@@ -1,8 +1,8 @@
-name: Build RoyaleVision Auto v5.4 APK
+name: Build RoyaleVision Auto v5.5 APK
 
 on:
   push:
-    branches: [ royalevision-auto-v5-4-match-detect ]
+    branches: [ royalevision-auto-v5-5-final ]
   workflow_dispatch:
 
 jobs:
@@ -18,6 +18,9 @@ jobs:
 
       - name: Apply adaptive v5.4 detector
         run: python scripts/v54_patch.py
+
+      - name: Apply footage-driven v5.5 hard fixes
+        run: python scripts/v55_patch.py
 
       - name: Bundle card artwork
         run: |
@@ -54,20 +57,20 @@ jobs:
         run: gradle --no-daemon clean assembleRelease
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.4.apk
+        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.5.apk
 
       - name: Verify APK
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.4.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.4.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.4.apk
-          unzip -l RoyaleVision-Auto-v5.4.apk | grep -q 'assets/cards/hog-rider.png'
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.5.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.5.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.5.apk
+          unzip -l RoyaleVision-Auto-v5.5.apk | grep -q 'assets/cards/hog-rider.png'
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: RoyaleVision-Auto-v5.4-APK
-          path: RoyaleVision-Auto-v5.4.apk
+          name: RoyaleVision-Auto-v5.5-APK
+          path: RoyaleVision-Auto-v5.5.apk
           if-no-files-found: error
 
       - name: Install and launch on Android 15 emulator
@@ -80,6 +83,6 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r RoyaleVision-Auto-v5.4.apk
+            adb install -r RoyaleVision-Auto-v5.5.apk
             adb shell am start -W -n com.huseyn.elixircollector/.AutoMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
