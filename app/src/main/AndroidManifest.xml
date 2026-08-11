@@ -13,7 +13,7 @@
         android:allowBackup="true"
         android:icon="@drawable/ic_elixir_collector"
         android:roundIcon="@drawable/ic_elixir_collector"
-        android:label="Elixir Collector"
+        android:label="RoyaleVision Manual"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
@@ -33,7 +33,7 @@
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-started floating manual game counter" />
+                android:value="User-started manual floating card, cycle, and elixir tracker" />
         </service>
     </application>
 
