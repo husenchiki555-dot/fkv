@@ -5,7 +5,6 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
@@ -23,7 +22,7 @@ import android.os.IBinder;
 import android.util.DisplayMetrics;
 import android.view.WindowManager;
 
-/** Foreground MediaProjection service for the completely local automatic-CV build. */
+/** Foreground MediaProjection service for the fully local automatic-CV build. */
 public final class AutoCaptureService extends Service {
     public static final String EXTRA_RESULT_CODE = "result_code";
     public static final String EXTRA_RESULT_DATA = "result_data";
@@ -42,10 +41,15 @@ public final class AutoCaptureService extends Service {
     public static final String K_ARENA_CHANGE = "arena_change";
     public static final String K_HINT = "effect_hint";
     public static final String K_STATUS = "status";
+    public static final String K_MATCH_CLOCK_START_MS = "match_clock_start_ms";
+    public static final String K_MATCH_ANCHOR_MS = "match_anchor_ms";
+    public static final String K_MATCH_ANCHOR_ELIXIR = "match_anchor_elixir";
 
     private static final String CHANNEL = "royalevision_auto_capture";
     private static final int NOTIFICATION_ID = 9505;
-    private static final long ANALYZE_EVERY_NS = 90_000_000L; // about 11 fps
+    private static final long ANALYZE_EVERY_NS = 90_000_000L; // ~11 fps
+    private static final int START_STABLE_FRAMES = 10;
+    private static final int END_MISSING_FRAMES = 28;
 
     private MediaProjection projection;
     private VirtualDisplay virtualDisplay;
@@ -60,6 +64,9 @@ public final class AutoCaptureService extends Service {
     private boolean matchActive;
     private double smoothedElixir = Double.NaN;
     private double smoothedConfidence;
+    private double stableMaxElixir = Double.NaN;
+    private double stableMinElixir = Double.NaN;
+    private long firstHudMs;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -95,6 +102,7 @@ public final class AutoCaptureService extends Service {
             return START_NOT_STICKY;
         }
         try {
+            clearLiveDetectionState();
             MediaProjectionManager manager = (MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
             projection = manager.getMediaProjection(resultCode, resultData);
             projection.registerCallback(new MediaProjection.Callback() {
@@ -104,7 +112,13 @@ public final class AutoCaptureService extends Service {
                 }
             }, analysisHandler);
             startVirtualDisplay();
-            prefs.edit().putBoolean(K_CAPTURE, true).putString(K_STATUS, "SEARCHING FOR BATTLE HUD").apply();
+            prefs.edit()
+                    .putBoolean(K_CAPTURE, true)
+                    .putBoolean(K_MATCH, false)
+                    .remove(K_LOCAL_ELIXIR)
+                    .putFloat(K_ELIXIR_CONF, 0f)
+                    .putString(K_STATUS, "SEARCHING FOR BATTLE HUD")
+                    .apply();
         } catch (RuntimeException e) {
             writeStopped("Capture error: " + e.getClass().getSimpleName());
             stopSelf();
@@ -161,31 +175,76 @@ public final class AutoCaptureService extends Service {
     }
 
     private void updateFromResult(FrameAnalyzer.Result r, long nowMs) {
-        if (!Double.isNaN(r.localElixir) && r.elixirConfidence > 0.16) {
+        boolean reliableHudFrame = r.battleHud
+                && !Double.isNaN(r.localElixir)
+                && r.localElixir >= 0.45
+                && r.elixirConfidence >= 0.42;
+
+        if (reliableHudFrame) {
             if (Double.isNaN(smoothedElixir)) smoothedElixir = r.localElixir;
             else {
-                // Follow sharp drops quickly; smooth normal regeneration/noise.
-                double alpha = r.localElixir < smoothedElixir - 0.45 ? 0.78 : 0.28;
+                // Drops must be followed quickly; normal regeneration/noise is smoothed.
+                double alpha = r.localElixir < smoothedElixir - 0.45 ? 0.78 : 0.30;
                 smoothedElixir = smoothedElixir * (1.0 - alpha) + r.localElixir * alpha;
             }
-            smoothedConfidence = smoothedConfidence * 0.70 + r.elixirConfidence * 0.30;
-        }
+            smoothedConfidence = smoothedConfidence * 0.68 + r.elixirConfidence * 0.32;
 
-        if (r.battleHud) {
+            if (hudStableFrames == 0) {
+                firstHudMs = nowMs;
+                stableMaxElixir = smoothedElixir;
+                stableMinElixir = smoothedElixir;
+            }
             hudStableFrames++;
             hudMissingFrames = 0;
+            stableMaxElixir = Double.isNaN(stableMaxElixir)
+                    ? smoothedElixir : Math.max(stableMaxElixir, smoothedElixir);
+            stableMinElixir = Double.isNaN(stableMinElixir)
+                    ? smoothedElixir : Math.min(stableMinElixir, smoothedElixir);
         } else {
             hudMissingFrames++;
-            hudStableFrames = Math.max(0, hudStableFrames - 1);
+            if (!matchActive) {
+                hudStableFrames = 0;
+                firstHudMs = 0L;
+                stableMaxElixir = Double.NaN;
+                stableMinElixir = Double.NaN;
+                // Do not carry a false/menu Elixir reading into the next battle.
+                if (hudMissingFrames >= 5) {
+                    smoothedElixir = Double.NaN;
+                    smoothedConfidence = 0.0;
+                }
+            } else {
+                hudStableFrames = Math.max(0, hudStableFrames - 1);
+            }
         }
 
-        if (!matchActive && hudStableFrames >= 7) {
+        if (!matchActive
+                && hudStableFrames >= START_STABLE_FRAMES
+                && smoothedConfidence >= 0.44
+                && !Double.isNaN(stableMaxElixir)
+                && stableMaxElixir >= 0.55) {
             matchActive = true;
             int session = prefs.getInt(K_SESSION, 0) + 1;
-            prefs.edit().putInt(K_SESSION, session).apply();
-        } else if (matchActive && hudMissingFrames >= 28) {
+            long clockStart = firstHudMs > 0L ? firstHudMs : nowMs;
+            // Use the highest reliable Elixir seen in the stable opening window.
+            // If the player spent a card during detection, this avoids anchoring
+            // the opponent to the post-spend low value.
+            double anchorElixir = Math.max(0.55, Math.min(10.0, stableMaxElixir));
+            prefs.edit()
+                    .putInt(K_SESSION, session)
+                    .putLong(K_MATCH_CLOCK_START_MS, clockStart)
+                    .putLong(K_MATCH_ANCHOR_MS, nowMs)
+                    .putFloat(K_MATCH_ANCHOR_ELIXIR, (float)anchorElixir)
+                    .apply();
+        } else if (matchActive && hudMissingFrames >= END_MISSING_FRAMES) {
             matchActive = false;
+            analyzer.resetTemporalState();
             hudStableFrames = 0;
+            hudMissingFrames = 0;
+            firstHudMs = 0L;
+            stableMaxElixir = Double.NaN;
+            stableMinElixir = Double.NaN;
+            smoothedElixir = Double.NaN;
+            smoothedConfidence = 0.0;
         }
 
         SharedPreferences.Editor e = prefs.edit()
@@ -194,19 +253,43 @@ public final class AutoCaptureService extends Service {
                 .putFloat(K_ELIXIR_CONF, (float)smoothedConfidence)
                 .putFloat(K_ARENA_CHANGE, (float)r.arenaChange)
                 .putString(K_HINT, r.effectHint == null ? "" : r.effectHint);
-        if (!Double.isNaN(smoothedElixir)) e.putFloat(K_LOCAL_ELIXIR, (float)smoothedElixir);
-        if (r.handChanged) e.putLong(K_HAND_CHANGE_MS, nowMs);
-        if (r.localPlay) e.putLong(K_LOCAL_PLAY_MS, nowMs);
-        if (r.localAbilitySpend) e.putLong(K_LOCAL_ABILITY_MS, nowMs);
-        if (r.enemyCandidate) e.putLong(K_ENEMY_CANDIDATE_MS, nowMs);
+        if (!Double.isNaN(smoothedElixir) && matchActive) {
+            e.putFloat(K_LOCAL_ELIXIR, (float)smoothedElixir);
+        } else if (!matchActive) {
+            e.remove(K_LOCAL_ELIXIR);
+        }
+        if (r.handChanged && matchActive) e.putLong(K_HAND_CHANGE_MS, nowMs);
+        if (r.localPlay && matchActive) e.putLong(K_LOCAL_PLAY_MS, nowMs);
+        if (r.localAbilitySpend && matchActive) e.putLong(K_LOCAL_ABILITY_MS, nowMs);
+        if (r.enemyCandidate && matchActive) e.putLong(K_ENEMY_CANDIDATE_MS, nowMs);
 
         String status;
-        if (!matchActive) status = "SEARCHING FOR BATTLE HUD";
-        else if (r.localPlay) status = "YOUR CARD CHANGED + ELIXIR DROP";
-        else if (r.localAbilitySpend) status = "YOUR ELIXIR DROP • NO HAND CHANGE";
-        else if (r.enemyCandidate) status = "OPPONENT ACTION CANDIDATE";
-        else status = "AUTO WATCHING";
+        if (!matchActive) {
+            if (hudStableFrames > 0) {
+                status = "VERIFYING BATTLE HUD " + hudStableFrames + "/" + START_STABLE_FRAMES;
+            } else status = "SEARCHING FOR BATTLE HUD";
+        } else if (r.localPlay) {
+            status = "YOUR PLAY • HAND CHANGED + ELIXIR DROP";
+        } else if (r.localAbilitySpend) {
+            status = "YOUR ELIXIR DROP • NO HAND CHANGE";
+        } else if (r.enemyCandidate) {
+            status = "OPPONENT ACTION CANDIDATE";
+        } else {
+            status = "AUTO WATCHING";
+        }
         e.putString(K_STATUS, status).apply();
+    }
+
+    private void clearLiveDetectionState() {
+        matchActive = false;
+        hudStableFrames = 0;
+        hudMissingFrames = 0;
+        firstHudMs = 0L;
+        stableMaxElixir = Double.NaN;
+        stableMinElixir = Double.NaN;
+        smoothedElixir = Double.NaN;
+        smoothedConfidence = 0.0;
+        analyzer.resetTemporalState();
     }
 
     private Notification buildNotification() {
@@ -231,8 +314,8 @@ public final class AutoCaptureService extends Service {
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT < 26) return;
-        NotificationChannel c = new NotificationChannel(CHANNEL, "RoyaleVision automatic capture",
-                NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel c = new NotificationChannel(CHANNEL,
+                "RoyaleVision automatic capture", NotificationManager.IMPORTANCE_LOW);
         c.setDescription("On-device screen analysis while automatic tracking is enabled");
         c.setShowBadge(false);
         ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(c);
@@ -240,8 +323,13 @@ public final class AutoCaptureService extends Service {
 
     private void writeStopped(String status) {
         if (prefs != null) {
-            prefs.edit().putBoolean(K_CAPTURE, false).putBoolean(K_MATCH, false)
-                    .putString(K_STATUS, status).apply();
+            prefs.edit()
+                    .putBoolean(K_CAPTURE, false)
+                    .putBoolean(K_MATCH, false)
+                    .remove(K_LOCAL_ELIXIR)
+                    .putFloat(K_ELIXIR_CONF, 0f)
+                    .putString(K_STATUS, status)
+                    .apply();
         }
     }
 
