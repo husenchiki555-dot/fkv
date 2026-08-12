@@ -92,10 +92,7 @@ jobs:
             adb shell appops set com.huseyn.elixircollector.debug SYSTEM_ALERT_WINDOW allow
             adb logcat -c
             adb shell am start -W -n com.huseyn.elixircollector.debug/com.huseyn.elixircollector.OverlayProbeActivity
-            for attempt in $(seq 1 12); do
-              if adb logcat -d -s RoyaleVisionProbe:I '*:S' | grep -q 'OVERLAY_ACTIVE'; then break; fi
-              sleep 1
-            done
+            for attempt in $(seq 1 12); do if adb logcat -d -s RoyaleVisionProbe:I '*:S' | grep -q 'OVERLAY_ACTIVE'; then break; fi; sleep 1; done
             adb logcat -d -s RoyaleVisionProbe:I RoyaleVisionProbe:E '*:S'
             adb logcat -d -s RoyaleVisionProbe:I '*:S' | grep -q 'OVERLAY_ACTIVE'
             adb shell dumpsys window windows | grep -q 'com.huseyn.elixircollector.debug'
