@@ -12,6 +12,9 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.widget.Button;
@@ -20,46 +23,317 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/** Setup screen for v5.2 sound + calibrated-hand fusion. */
+import java.util.ArrayList;
+
+/** Setup and explicit user-consent flow for v6 capture. */
 public final class AutoMainActivity extends Activity {
-    private static final int REQ_CAPTURE=4105,REQ_AUDIO=4106;
-    private TextView overlayBadge,captureBadge,deckBadge,audioBadge;private boolean openGameAfterPermission,pendingStart;
+    private static final int REQ_CAPTURE = 4601;
+    private static final int REQ_RUNTIME = 4602;
+    private TextView overlayBadge, captureBadge, deckBadge, audioBadge;
+    private boolean openGameAfterPermission;
+    private boolean pendingStart;
+    private boolean pendingProjectionRequest;
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
-    @Override protected void onCreate(Bundle b){super.onCreate(b);getWindow().setStatusBarColor(Color.rgb(14,10,20));getWindow().setNavigationBarColor(Color.rgb(14,10,20));buildUi();}
-    @Override protected void onResume(){super.onResume();updateBadges();}
-
-    private void buildUi(){
-        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(Color.rgb(14,10,20));LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);page.setPadding(dp(18),dp(20),dp(18),dp(28));scroll.addView(page,new ScrollView.LayoutParams(-1,-2));
-        LinearLayout hero=box(Color.rgb(42,24,58),Color.rgb(140,73,188));hero.setGravity(Gravity.CENTER);page.addView(hero,match(12));TextView title=text("ROYALEVISION AUTO v5.2",25,Color.WHITE,true);title.setGravity(Gravity.CENTER);hero.addView(title,match(4));TextView sub=text("sound + calibrated hand + vision • no cloud",13,Color.rgb(229,208,241),false);sub.setGravity(Gravity.CENTER);hero.addView(sub,match(0));
-
-        LinearLayout how=box(Color.rgb(29,23,38),Color.rgb(67,55,79));page.addView(how,match(12));how.addView(text("HOW THIS BUILD DECIDES",14,Color.rgb(230,197,249),true),match(7));how.addView(line("• You choose your exact 8-card deck before the match."),match(4));how.addView(line("• Your 4 live hand slots are compared only against those 8 cards."),match(4));how.addView(line("• Hand change + your Elixir drop = YOUR play, so enemy tracking is suppressed."),match(4));how.addView(line("• Game sound transients are learned from your own identified plays and reused as supporting evidence."),match(4));how.addView(line("• Enemy Elixir is auto-spent only when a deployment cost badge is also detected."),match(4));how.addView(line("• No debug/calibration boxes are drawn over the game."),match(0));
-
-        LinearLayout status=box(Color.rgb(29,23,38),Color.rgb(67,55,79));page.addView(status,match(12));status.addView(text("SETUP",14,Color.rgb(230,197,249),true),match(7));deckBadge=badge();status.addView(deckBadge,match(5));overlayBadge=badge();status.addView(overlayBadge,match(5));audioBadge=badge();status.addView(audioBadge,match(5));captureBadge=badge();status.addView(captureBadge,match(0));
-
-        Button deck=button("1 • CALIBRATE MY 8-CARD DECK",Color.rgb(94,58,132));deck.setOnClickListener(v->startActivity(new Intent(this,DeckCalibrationActivity.class)));page.addView(deck,height(56,8));Button overlay=button("2 • ALLOW FLOATING WINDOW",Color.rgb(102,53,140));overlay.setOnClickListener(v->requestOverlayPermission());page.addView(overlay,height(54,8));Button start=button("3 • START AUTO + OPEN CLASH ROYALE",Color.rgb(156,67,205));start.setOnClickListener(v->startAutomatic(true));page.addView(start,height(61,8));Button startOnly=button("START AUTO TRACKING",Color.rgb(51,104,163));startOnly.setOnClickListener(v->startAutomatic(false));page.addView(startOnly,height(53,8));
-        LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);page.addView(row,height(48,12));Button game=button("OPEN GAME",Color.rgb(46,54,72));game.setTextSize(12);game.setOnClickListener(v->openGame());LinearLayout.LayoutParams a=new LinearLayout.LayoutParams(0,dp(48),1);a.rightMargin=dp(4);row.addView(game,a);Button stop=button("STOP ALL",Color.rgb(91,42,58));stop.setTextSize(12);stop.setOnClickListener(v->stopAll());LinearLayout.LayoutParams c=new LinearLayout.LayoutParams(0,dp(48),1);c.leftMargin=dp(4);row.addView(stop,c);
-
-        LinearLayout note=box(Color.rgb(29,23,38),Color.rgb(67,55,79));page.addView(note,match(0));note.addView(text("WHAT “NO DEBUG BOXES” MEANS",13,Color.rgb(230,197,249),true),match(6));TextView body=text("The earlier suggestion was to temporarily draw rectangles around the Elixir bar and each detected hand slot so a recording would show exactly what the detector was looking at. You asked for a version without that, so v5.2 keeps those calibration measurements internal and only shows the transparent opponent overlay.",12,Color.rgb(185,170,195),false);body.setLineSpacing(0,1.15f);note.addView(body,match(0));
-        setContentView(scroll);updateBadges();
+    @Override protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        getWindow().setStatusBarColor(Color.rgb(14, 10, 20));
+        getWindow().setNavigationBarColor(Color.rgb(14, 10, 20));
+        buildUi();
     }
 
-    private void startAutomatic(boolean openGame){
-        if(DeckCalibrationActivity.loadDeck(this).size()!=8){Toast.makeText(this,"Calibrate your exact 8-card deck first",Toast.LENGTH_LONG).show();startActivity(new Intent(this,DeckCalibrationActivity.class));return;}
-        if(Build.VERSION.SDK_INT>=23&&!Settings.canDrawOverlays(this)){requestOverlayPermission();Toast.makeText(this,"Enable floating-window permission, then tap Start again",Toast.LENGTH_LONG).show();return;}
-        openGameAfterPermission=openGame;
-        if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){pendingStart=true;requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},REQ_AUDIO);return;}
-        beginCapture();
+    @Override protected void onResume() { super.onResume(); updateBadges(); }
+
+    private void buildUi() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Color.rgb(14, 10, 20));
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(18), dp(20), dp(18), dp(28));
+        scroll.addView(page, new ScrollView.LayoutParams(-1, -2));
+
+        LinearLayout hero = box(Color.rgb(42, 24, 58), Color.rgb(140, 73, 188));
+        hero.setGravity(Gravity.CENTER);
+        page.addView(hero, match(12));
+        TextView title = text("ROYALEVISION v6.1", 26, Color.WHITE, true);
+        title.setGravity(Gravity.CENTER);
+        hero.addView(title, match(4));
+        TextView sub = text("adaptive hand + rail + arena + optional sound", 13,
+                Color.rgb(229, 208, 241), false);
+        sub.setGravity(Gravity.CENTER);
+        hero.addView(sub, match(0));
+
+        LinearLayout facts = box(Color.rgb(29, 23, 38), Color.rgb(67, 55, 79));
+        page.addView(facts, match(12));
+        facts.addView(text("HOW v6 DECIDES", 14, Color.rgb(230, 197, 249), true), match(7));
+        facts.addView(line("• The four-card hand layout is found and tracked adaptively."), match(4));
+        facts.addView(line("• Match detection fuses hand, rail, arena, timer, crown, and stability cues."), match(4));
+        facts.addView(line("• Hand transition + a sharp visible Elixir drop marks your play."), match(4));
+        facts.addView(line("• Opponent Elixir is hidden, so v6 keeps best/min/max/confidence instead of pretending it is observed."), match(4));
+        facts.addView(line("• Opponent identity stays “?” unless fused evidence is genuinely strong."), match(4));
+        facts.addView(line("• Playback-audio failure never stops visual capture."), match(0));
+
+        LinearLayout status = box(Color.rgb(29, 23, 38), Color.rgb(67, 55, 79));
+        page.addView(status, match(12));
+        status.addView(text("SETUP", 14, Color.rgb(230, 197, 249), true), match(7));
+        deckBadge = badge(); status.addView(deckBadge, match(5));
+        overlayBadge = badge(); status.addView(overlayBadge, match(5));
+        audioBadge = badge(); status.addView(audioBadge, match(5));
+        captureBadge = badge(); status.addView(captureBadge, match(0));
+
+        Button deck = button("1 • CALIBRATE MY EXACT 8-CARD DECK", Color.rgb(94, 58, 132));
+        deck.setOnClickListener(v -> startActivity(new Intent(this, DeckCalibrationActivity.class)));
+        page.addView(deck, height(56, 8));
+        Button overlay = button("2 • ALLOW FLOATING WINDOW", Color.rgb(102, 53, 140));
+        overlay.setOnClickListener(v -> requestOverlayPermission());
+        page.addView(overlay, height(54, 8));
+        Button start = button(Build.VERSION.SDK_INT >= 34
+                ? "3 • START v6 • THEN CHOOSE CLASH ROYALE"
+                : "3 • START v6 + OPEN CLASH ROYALE", Color.rgb(156, 67, 205));
+        start.setOnClickListener(v -> startAutomatic(true));
+        page.addView(start, height(61, 8));
+        Button startOnly = button("START v6 TRACKING ONLY", Color.rgb(51, 104, 163));
+        startOnly.setOnClickListener(v -> startAutomatic(false));
+        page.addView(startOnly, height(53, 8));
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        page.addView(row, height(48, 0));
+        Button game = button("OPEN GAME", Color.rgb(46, 54, 72));
+        game.setTextSize(12); game.setOnClickListener(v -> openGame());
+        LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        gp.rightMargin = dp(4); row.addView(game, gp);
+        Button stop = button("STOP ALL", Color.rgb(91, 42, 58));
+        stop.setTextSize(12); stop.setOnClickListener(v -> stopAll());
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        sp.leftMargin = dp(4); row.addView(stop, sp);
+
+        setContentView(scroll);
+        updateBadges();
     }
-    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){super.onRequestPermissionsResult(requestCode,permissions,results);if(requestCode==REQ_AUDIO&&pendingStart){pendingStart=false;if(results.length==0||results[0]!=PackageManager.PERMISSION_GRANTED)Toast.makeText(this,"Sound permission denied • tracking will fall back to hand + vision",Toast.LENGTH_LONG).show();beginCapture();}}
-    private void beginCapture(){startOverlayService();MediaProjectionManager m=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);startActivityForResult(m.createScreenCaptureIntent(),REQ_CAPTURE);}
-    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){super.onActivityResult(requestCode,resultCode,data);if(requestCode!=REQ_CAPTURE)return;if(resultCode!=RESULT_OK||data==null){Toast.makeText(this,"Screen capture permission was not granted",Toast.LENGTH_LONG).show();return;}Intent service=new Intent(this,AutoCaptureService.class);service.putExtra(AutoCaptureService.EXTRA_RESULT_CODE,resultCode);service.putExtra(AutoCaptureService.EXTRA_RESULT_DATA,data);if(Build.VERSION.SDK_INT>=26)startForegroundService(service);else startService(service);Toast.makeText(this,"Auto fusion started",Toast.LENGTH_SHORT).show();if(openGameAfterPermission)getWindow().getDecorView().postDelayed(this::openGame,350);updateBadges();}
 
-    private void requestOverlayPermission(){if(Build.VERSION.SDK_INT<23||Settings.canDrawOverlays(this)){Toast.makeText(this,"Floating window already enabled",Toast.LENGTH_SHORT).show();return;}startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:"+getPackageName())));}
-    private void startOverlayService(){Intent i=new Intent(this,AutoOverlayService.class);if(Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);}
-    private void stopAll(){stopService(new Intent(this,AutoCaptureService.class));stopService(new Intent(this,AutoOverlayService.class));getSharedPreferences(AutoCaptureService.PREFS,MODE_PRIVATE).edit().putBoolean(AutoCaptureService.K_CAPTURE,false).putBoolean(AutoCaptureService.K_MATCH,false).apply();Toast.makeText(this,"RoyaleVision stopped",Toast.LENGTH_SHORT).show();updateBadges();}
-    private void openGame(){Intent launch=getPackageManager().getLaunchIntentForPackage("com.supercell.clashroyale");if(launch!=null){launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(launch);return;}try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("market://details?id=com.supercell.clashroyale")));}catch(ActivityNotFoundException e){startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://play.google.com/store/apps/details?id=com.supercell.clashroyale")));}}
+    private void startAutomatic(boolean openGame) {
+        if (DeckCalibrationActivity.loadDeck(this).size() != 8) {
+            Toast.makeText(this, "Calibrate exactly 8 cards first", Toast.LENGTH_LONG).show();
+            startActivity(new Intent(this, DeckCalibrationActivity.class));
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            requestOverlayPermission();
+            Toast.makeText(this, "Enable floating-window permission, then tap Start again",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        openGameAfterPermission = openGame;
+        ArrayList<String> permissions = new ArrayList<>();
+        if (Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.RECORD_AUDIO);
+        }
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        if (!permissions.isEmpty()) {
+            pendingStart = true;
+            requestPermissions(permissions.toArray(new String[0]), REQ_RUNTIME);
+            return;
+        }
+        startOverlayThenCapture();
+    }
 
-    private void updateBadges(){if(overlayBadge==null)return;boolean overlay=Build.VERSION.SDK_INT<23||Settings.canDrawOverlays(this),capture=getSharedPreferences(AutoCaptureService.PREFS,MODE_PRIVATE).getBoolean(AutoCaptureService.K_CAPTURE,false),deck=DeckCalibrationActivity.loadDeck(this).size()==8,audio=Build.VERSION.SDK_INT<23||checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED;setBadge(deckBadge,deck?"✓ 8-CARD DECK CALIBRATED":"! CALIBRATE YOUR 8-CARD DECK",deck);setBadge(overlayBadge,overlay?"✓ FLOATING WINDOW ENABLED":"! FLOATING WINDOW REQUIRED",overlay);setBadge(audioBadge,audio?"✓ SOUND PERMISSION READY":"○ SOUND PERMISSION NOT GRANTED",audio);setBadge(captureBadge,capture?"✓ AUTO CAPTURE ACTIVE":"○ AUTO CAPTURE OFF",capture);}
-    private TextView badge(){TextView v=text("",12,Color.WHITE,true);v.setGravity(Gravity.CENTER);v.setPadding(dp(8),dp(8),dp(8),dp(8));return v;}private void setBadge(TextView v,String t,boolean good){v.setText(t);v.setTextColor(good?Color.rgb(178,255,198):Color.rgb(255,196,204));v.setBackground(panel(good?Color.rgb(30,79,49):Color.rgb(84,39,49),12,good?Color.rgb(71,139,89):Color.rgb(137,65,78)));}
-    private LinearLayout box(int fill,int stroke){LinearLayout b=new LinearLayout(this);b.setOrientation(LinearLayout.VERTICAL);b.setPadding(dp(15),dp(14),dp(15),dp(14));b.setBackground(panel(fill,18,stroke));return b;}private TextView line(String s){TextView t=text(s,13,Color.rgb(224,216,231),false);t.setLineSpacing(0,1.12f);return t;}private TextView text(String s,int size,int color,boolean bold){TextView v=new TextView(this);v.setText(s);v.setTextSize(size);v.setTextColor(color);if(bold)v.setTypeface(Typeface.DEFAULT_BOLD);return v;}private Button button(String s,int color){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(14);b.setAllCaps(false);b.setTypeface(Typeface.DEFAULT_BOLD);b.setGravity(Gravity.CENTER);b.setBackground(panel(color,16,Color.argb(75,255,255,255)));return b;}private GradientDrawable panel(int fill,int radius,int stroke){GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(dp(radius));if(stroke!=Color.TRANSPARENT)d.setStroke(dp(1),stroke);return d;}private LinearLayout.LayoutParams match(int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(bottom);return p;}private LinearLayout.LayoutParams height(int h,int bottom){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(h));p.bottomMargin=dp(bottom);return p;}private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                                     int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == REQ_RUNTIME && pendingStart) {
+            pendingStart = false;
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Sound unavailable • visual tracking will continue normally",
+                        Toast.LENGTH_LONG).show();
+            }
+            startOverlayThenCapture();
+        }
+    }
+
+    /** Start a visible overlay while this Activity is foreground, then request projection. */
+    private void startOverlayThenCapture() {
+        if (pendingProjectionRequest) return;
+        pendingProjectionRequest = true;
+        stopService(new Intent(this, AutoCaptureService.class));
+        SnapshotStore store = new SnapshotStore(this);
+        store.clearForStart();
+        store.setOverlayActive(false);
+        Intent overlay = new Intent(this, AutoOverlayService.class);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(overlay);
+            else startService(overlay);
+        } catch (RuntimeException error) {
+            pendingProjectionRequest = false;
+            store.reportNonFatalError("Could not start overlay: " + error.getClass().getSimpleName());
+            Toast.makeText(this, store.lastError(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        long deadline = SystemClock.elapsedRealtime() + 3_000L;
+        handler.postDelayed(() -> waitForOverlay(store, deadline), 180L);
+    }
+
+    /** Service startup is asynchronous and may take more than one UI frame. */
+    private void waitForOverlay(SnapshotStore store, long deadlineElapsedMs) {
+        if (store.overlayActive()) {
+            pendingProjectionRequest = false;
+            requestCapturePermission();
+            return;
+        }
+        if (SystemClock.elapsedRealtime() < deadlineElapsedMs) {
+            handler.postDelayed(() -> waitForOverlay(store, deadlineElapsedMs), 180L);
+            return;
+        }
+        pendingProjectionRequest = false;
+        String reason = store.lastError();
+        if (reason == null || reason.isEmpty()) reason = "Floating overlay did not become visible";
+        Toast.makeText(this, reason + ". Re-open floating-window settings and allow background pop-ups.",
+                Toast.LENGTH_LONG).show();
+        updateBadges();
+    }
+
+    private void requestCapturePermission() {
+        MediaProjectionManager manager = (MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
+        startActivityForResult(manager.createScreenCaptureIntent(), REQ_CAPTURE);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_CAPTURE) return;
+        if (resultCode != RESULT_OK || data == null) {
+            new SnapshotStore(this).reportNonFatalError("Screen capture permission was not granted");
+            Toast.makeText(this, "Screen capture permission was not granted", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent capture = new Intent(this, AutoCaptureService.class);
+        capture.putExtra(AutoCaptureService.EXTRA_RESULT_CODE, resultCode);
+        capture.putExtra(AutoCaptureService.EXTRA_RESULT_DATA, data);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(capture);
+            else startService(capture);
+        } catch (RuntimeException error) {
+            String message = "Capture service failed: " + error.getClass().getSimpleName();
+            new SnapshotStore(this).reportNonFatalError(message);
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, "RoyaleVision v6.1 started", Toast.LENGTH_SHORT).show();
+        // Android 14+ app sharing already opens the app selected in the system
+        // picker. Launching it again 420 ms later caused a disruptive double-resume.
+        if (openGameAfterPermission && Build.VERSION.SDK_INT < 34) {
+            getWindow().getDecorView().postDelayed(this::openGame, 650);
+        }
+        updateBadges();
+    }
+
+    private void requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "Floating window already enabled", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName())));
+    }
+
+    private void stopAll() {
+        stopService(new Intent(this, AutoCaptureService.class));
+        stopService(new Intent(this, AutoOverlayService.class));
+        new SnapshotStore(this).stopped("Stopped by user");
+        Toast.makeText(this, "RoyaleVision stopped", Toast.LENGTH_SHORT).show();
+        updateBadges();
+    }
+
+    @Override protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+
+    private void openGame() {
+        Intent launch = getPackageManager().getLaunchIntentForPackage("com.supercell.clashroyale");
+        if (launch != null) {
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(launch);
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("market://details?id=com.supercell.clashroyale")));
+        } catch (ActivityNotFoundException missingStore) {
+            startActivity(new Intent(Intent.ACTION_VIEW,
+                    Uri.parse("https://play.google.com/store/apps/details?id=com.supercell.clashroyale")));
+        }
+    }
+
+    private void updateBadges() {
+        if (overlayBadge == null) return;
+        boolean overlay = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this);
+        boolean capture = new SnapshotStore(this).captureActive();
+        boolean deck = DeckCalibrationActivity.loadDeck(this).size() == 8;
+        boolean audio = Build.VERSION.SDK_INT < 23
+                || checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        setBadge(deckBadge, deck ? "✓ EXACT 8-CARD DECK SAVED" : "! CALIBRATE EXACTLY 8 CARDS", deck);
+        setBadge(overlayBadge, overlay ? "✓ FLOATING WINDOW ENABLED" : "! FLOATING WINDOW REQUIRED", overlay);
+        setBadge(audioBadge, audio ? "✓ OPTIONAL SOUND PERMISSION READY" : "○ SOUND OFF • VISUAL STILL WORKS", true);
+        setBadge(captureBadge, capture ? "✓ v6 CAPTURE ACTIVE" : "○ v6 CAPTURE OFF", capture);
+    }
+
+    private TextView badge() {
+        TextView view = text("", 12, Color.WHITE, true);
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(dp(8), dp(8), dp(8), dp(8));
+        return view;
+    }
+
+    private void setBadge(TextView view, String value, boolean good) {
+        view.setText(value);
+        view.setTextColor(good ? Color.rgb(178, 255, 198) : Color.rgb(255, 196, 204));
+        view.setBackground(panel(good ? Color.rgb(30, 79, 49) : Color.rgb(84, 39, 49),
+                12, good ? Color.rgb(71, 139, 89) : Color.rgb(137, 65, 78)));
+    }
+
+    private LinearLayout box(int fill, int stroke) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(15), dp(14), dp(15), dp(14));
+        box.setBackground(panel(fill, 18, stroke));
+        return box;
+    }
+    private TextView line(String value) {
+        TextView view = text(value, 13, Color.rgb(224, 216, 231), false);
+        view.setLineSpacing(0, 1.12f);
+        return view;
+    }
+    private TextView text(String value, int size, int color, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(value); view.setTextSize(size); view.setTextColor(color);
+        if (bold) view.setTypeface(Typeface.DEFAULT_BOLD);
+        return view;
+    }
+    private Button button(String value, int color) {
+        Button button = new Button(this);
+        button.setText(value); button.setTextColor(Color.WHITE); button.setTextSize(14);
+        button.setAllCaps(false); button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setGravity(Gravity.CENTER); button.setBackground(panel(color, 16, Color.argb(75,255,255,255)));
+        return button;
+    }
+    private GradientDrawable panel(int fill, int radius, int stroke) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill); drawable.setCornerRadius(dp(radius));
+        if (stroke != Color.TRANSPARENT) drawable.setStroke(dp(1), stroke);
+        return drawable;
+    }
+    private LinearLayout.LayoutParams match(int bottom) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.bottomMargin = dp(bottom); return p;
+    }
+    private LinearLayout.LayoutParams height(int height, int bottom) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(height));
+        p.bottomMargin = dp(bottom); return p;
+    }
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

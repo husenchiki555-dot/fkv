@@ -66,7 +66,7 @@ public final class CardCatalog {
         list.add(new Card("tombstone", "tombstone", "Tombstone", 3, false));
         list.add(new Card("tornado", "tornado", "Tornado", 3, false));
         list.add(new Card("vines", "vines", "Vines", 3, false));
-        list.add(new Card("void", "void", "Void", 3, false));
+        list.add(new Card("void", "void", "Void", 5, false));
         list.add(new Card("baby_dragon", "baby_dragon", "Baby Dragon", 4, false));
         list.add(new Card("battle_healer", "battle_healer", "Battle Healer", 4, false));
         list.add(new Card("battle_ram", "battle_ram", "Battle Ram", 4, false));
@@ -156,6 +156,16 @@ public final class CardCatalog {
         ArrayList<Card> out = new ArrayList<>();
         for (Card c : ALL) if (!c.mirror && c.cost == cost) out.add(c);
         return out;
+    }
+
+    public static Card find(String id) {
+        if (id == null) return null;
+        Card deckMatch = null;
+        for (Card c : ALL) {
+            if (c.id.equals(id)) return c;
+            if (deckMatch == null && c.deckId.equals(id)) deckMatch = c;
+        }
+        return deckMatch;
     }
 
     public static Card mirror() { for (Card c : ALL) if (c.mirror) return c; return null; }

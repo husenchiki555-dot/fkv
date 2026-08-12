@@ -1,37 +1,33 @@
-name: Build RoyaleVision Auto v5.5 APK
+name: Build RoyaleVision v6.1 APK
 
 on:
   push:
-    branches: [ royalevision-auto-v5-5-final ]
+    branches: [ royalevision-v6 ]
+  pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build-and-test:
+  build-test-verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Apply v5.3 safety fixes
-        run: python scripts/v53_patch.py
-
-      - name: Apply adaptive v5.4 detector
-        run: python scripts/v54_patch.py
-
-      - name: Apply footage-driven v5.5 hard fixes
-        run: python scripts/v55_patch.py
-
-      - name: Bundle card artwork
+      - name: Bundle current card artwork
         run: |
-          rm -rf /tmp/cr-assets
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/RoyaleAPI/cr-api-assets.git /tmp/cr-assets
-          cd /tmp/cr-assets
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/RoyaleAPI/cr-api-assets.git /tmp/royaleapi-assets
+          cd /tmp/royaleapi-assets
           git sparse-checkout set cards-75
           mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/cards"
           cp cards-75/*.png "$GITHUB_WORKSPACE/app/src/main/assets/cards/"
           test -f "$GITHUB_WORKSPACE/app/src/main/assets/cards/hog-rider.png"
           test -f "$GITHUB_WORKSPACE/app/src/main/assets/cards/knight-ev1.png"
+          test -f "$GITHUB_WORKSPACE/app/src/main/assets/cards/knight-hero.png"
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -53,28 +49,33 @@ jobs:
       - name: Restore release signing key
         run: base64 --decode app/release-key.jks.b64 > app/release-key.jks
 
-      - name: Build signed release APK
-        run: gradle --no-daemon clean assembleRelease
+      - name: Run deterministic unit tests
+        run: gradle --no-daemon testReleaseUnitTest
+
+      - name: Build signed release and Android integration probe
+        run: gradle --no-daemon assembleRelease assembleDebug
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-Auto-v5.5.apk
+        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-v6.1.0.apk
 
-      - name: Verify APK
+      - name: Verify package, alignment, signature, and assets
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-Auto-v5.5.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-Auto-v5.5.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-Auto-v5.5.apk
-          unzip -l RoyaleVision-Auto-v5.5.apk | grep -q 'assets/cards/hog-rider.png'
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-v6.1.0.apk | tee /tmp/badging.txt
+          grep -q "package: name='com.huseyn.elixircollector' versionCode='610' versionName='6.1.0'" /tmp/badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-v6.1.0.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-v6.1.0.apk
+          unzip -l RoyaleVision-v6.1.0.apk | grep -q 'assets/cards/hog-rider.png'
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: RoyaleVision-Auto-v5.5-APK
-          path: RoyaleVision-Auto-v5.5.apk
+          name: RoyaleVision-v6.1.0-APK
+          path: RoyaleVision-v6.1.0.apk
           if-no-files-found: error
+          retention-days: 30
 
       - name: Install and launch on Android 15 emulator
-        timeout-minutes: 8
+        timeout-minutes: 12
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -83,6 +84,16 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r RoyaleVision-Auto-v5.5.apk
+            adb install -r RoyaleVision-v6.1.0.apk
             adb shell am start -W -n com.huseyn.elixircollector/.AutoMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
+            adb shell dumpsys activity activities | grep -q 'com.huseyn.elixircollector/.AutoMainActivity'
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell appops set com.huseyn.elixircollector.debug SYSTEM_ALERT_WINDOW allow
+            adb logcat -c
+            adb shell am start -W -n com.huseyn.elixircollector.debug/com.huseyn.elixircollector.OverlayProbeActivity
+            for attempt in $(seq 1 12); do if adb logcat -d -s RoyaleVisionProbe:I '*:S' | grep -q 'OVERLAY_ACTIVE'; then break; fi; sleep 1; done
+            adb logcat -d -s RoyaleVisionProbe:I RoyaleVisionProbe:E '*:S'
+            adb logcat -d -s RoyaleVisionProbe:I '*:S' | grep -q 'OVERLAY_ACTIVE'
+            adb shell dumpsys window windows | grep -q 'com.huseyn.elixircollector.debug'
+            adb shell am force-stop com.huseyn.elixircollector.debug
