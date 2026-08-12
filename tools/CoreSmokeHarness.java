@@ -20,9 +20,9 @@ public final class CoreSmokeHarness {
         for (int i = 0; i < 5; i++) hud = hudTracker.update(frame);
         require(hud != null && hud.state == HudLayoutTracker.State.LOCKED,
                 "HUD did not lock on measured phone profile");
-        require(Math.abs(hud.layout.handCenters[0] - 0.24) <= 0.055,
+        require(Math.abs(hud.layout.handCenters[0] - 0.313) <= 0.045,
                 "first hand slot was not located adaptively");
-        require(Math.abs(hud.layout.handCenters[3] - 0.70) <= 0.065,
+        require(Math.abs(hud.layout.handCenters[3] - 0.867) <= 0.055,
                 "fourth hand slot was not located adaptively");
 
         ElixirBarTracker tracker = new ElixirBarTracker();
@@ -40,6 +40,56 @@ public final class CoreSmokeHarness {
             drop |= reading.sharpDrop;
         }
         require(drop && reading.value < 4.2, "sharp spend was over-smoothed");
+
+        frame.setFill(0.0);
+        frame.setLowerLabelNoise(true);
+        frame.setBattleMessageNoise(true);
+        for (int i = 0; i < 4; i++) reading = tracker.update(frame, hud, time += 100);
+        require(reading.locked() && reading.value <= 0.20,
+                "empty rail or HUD text was reported as Elixir");
+        require(reading.rail != null && reading.rail.centerY() <= 0.986,
+                "rail drifted into the Max:10 label");
+
+        frame.setDeploymentFlash(true);
+        for (int i = 0; i < 2; i++) reading = tracker.update(frame, hud, time += 100);
+        require(reading.hasValue() && reading.value <= 0.35,
+                "pale deployment flash was reported as Elixir");
+
+        SyntheticFrame shifted = new SyntheticFrame(1080, 2400);
+        shifted.setRailOffsetY(-0.012);
+        HudLayoutTracker shiftedHudTracker = new HudLayoutTracker();
+        HudLayoutTracker.Observation shiftedHud = null;
+        for (int i = 0; i < 5; i++) shiftedHud = shiftedHudTracker.update(shifted);
+        ElixirBarTracker shiftedTracker = new ElixirBarTracker();
+        ElixirBarTracker.Reading shiftedReading = null;
+        for (int i = 0; i < 7; i++) {
+            shiftedReading = shiftedTracker.update(shifted, shiftedHud, time += 100);
+        }
+        require(shiftedReading != null && shiftedReading.locked()
+                        && Math.abs(shiftedReading.value - 7.0) <= 0.85,
+                "vertically shifted rail did not calibrate");
+        require(shiftedReading.rail != null
+                        && Math.abs(shiftedReading.rail.centerY() - 0.9655) <= 0.007,
+                "rail remained fixed to the phone-profile seed");
+
+        SyntheticFrame emptyStart = new SyntheticFrame(1080, 2400);
+        emptyStart.setFill(0.0);
+        HudLayoutTracker emptyHudTracker = new HudLayoutTracker();
+        HudLayoutTracker.Observation emptyHud = null;
+        for (int i = 0; i < 5; i++) emptyHud = emptyHudTracker.update(emptyStart);
+        ElixirBarTracker emptyTracker = new ElixirBarTracker();
+        ElixirBarTracker.Reading emptyReading = null;
+        for (int i = 0; i < 10; i++) {
+            emptyReading = emptyTracker.update(emptyStart, emptyHud, time += 100);
+        }
+        require(emptyReading != null && !emptyReading.locked() && !emptyReading.hasValue(),
+                "empty loading/deck strip initialized a fake rail");
+        emptyStart.setFill(0.70);
+        for (int i = 0; i < 7; i++) {
+            emptyReading = emptyTracker.update(emptyStart, emptyHud, time += 100);
+        }
+        require(emptyReading.locked() && Math.abs(emptyReading.value - 7.0) <= 0.85,
+                "rail did not acquire after real fill appeared");
     }
 
     private static void battleLifecycle() {
@@ -119,8 +169,12 @@ public final class CoreSmokeHarness {
     private static final class SyntheticFrame implements PixelFrame {
         private final int width;
         private final int height;
-        private final double[] centers = {0.24, 0.40, 0.55, 0.70};
+        private final double[] centers = {0.313, 0.4975, 0.682, 0.8665};
         private double fill = 0.70;
+        private boolean lowerLabelNoise;
+        private boolean battleMessageNoise;
+        private boolean deploymentFlash;
+        private double railOffsetY;
 
         SyntheticFrame(int width, int height) {
             this.width = width;
@@ -131,19 +185,38 @@ public final class CoreSmokeHarness {
             fill = Math.max(0.0, Math.min(1.0, value));
         }
 
+        void setLowerLabelNoise(boolean enabled) { lowerLabelNoise = enabled; }
+        void setBattleMessageNoise(boolean enabled) { battleMessageNoise = enabled; }
+        void setDeploymentFlash(boolean enabled) { deploymentFlash = enabled; }
+        void setRailOffsetY(double offset) { railOffsetY = offset; }
+
         @Override public int width() { return width; }
         @Override public int height() { return height; }
 
         @Override public int rgb(int x, int y) {
             double nx = x / (double)Math.max(1, width - 1);
             double ny = y / (double)Math.max(1, height - 1);
-            if (ny >= 0.955 && ny <= 0.965 && nx >= 0.15 && nx <= 0.84) {
-                double position = (nx - 0.15) / 0.69;
-                return position <= fill ? rgb(190, 42, 226) : rgb(42, 28, 52);
+            if (lowerLabelNoise && ny >= 0.987 && ny <= 0.994
+                    && nx >= 0.276 && nx <= 0.385) {
+                return rgb(205, 88, 214);
             }
-            if (ny >= 0.82) {
+            if (battleMessageNoise && ny >= 0.962 && ny <= 0.976
+                    && nx >= 0.300 && nx <= 0.760) {
+                int stripe = ((int)(nx * width / 13.0) + (int)(ny * height / 7.0)) & 3;
+                return stripe == 0 ? rgb(24, 32, 88) : rgb(112, 34, 88);
+            }
+            if (deploymentFlash && ny >= 0.978 && ny <= 0.985
+                    && nx >= 0.276 && nx <= 0.420) {
+                return rgb(255, 232, 255);
+            }
+            if (ny >= 0.972 + railOffsetY && ny <= 0.983 + railOffsetY
+                    && nx >= 0.276 && nx <= 0.972) {
+                double position = (nx - 0.276) / 0.696;
+                return position <= fill ? rgb(190, 42, 226) : rgb(5, 55, 123);
+            }
+            if (ny >= 0.70) {
                 for (int i = 0; i < centers.length; i++) {
-                    if (Math.abs(nx - centers[i]) <= 0.052 && ny >= 0.84 && ny <= 0.93) {
+                    if (Math.abs(nx - centers[i]) <= 0.082 && ny >= 0.742 && ny <= 0.930) {
                         int gx = (int)(nx * width / 15.0);
                         int gy = (int)(ny * height / 18.0);
                         int shift = (gx + gy + i * 3) & 3;

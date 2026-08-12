@@ -45,4 +45,25 @@ public class BattleStateMachineTest {
         assertEquals(BattleStateMachine.State.OUTSIDE_BATTLE, ended.state);
         assertTrue(ended.exitedBattle);
     }
+
+    @Test public void handAndPurpleMenuAccentCannotStartAMatchWithoutTowers() {
+        BattleStateMachine machine = new BattleStateMachine();
+        BattleCueDetector.Signals deckScreen = new BattleCueDetector.Signals(
+                0.66, 0.84, 0.67, 0.21, 0.70, 0.76, 0.0, 0.65, 2, 0);
+        for (int i = 0; i < 40; i++) {
+            assertEquals(BattleStateMachine.State.OUTSIDE_BATTLE,
+                    machine.update(deckScreen, 1_000 + i * 100L).state);
+        }
+    }
+
+    @Test public void recognizedHandCanStartWithoutRailWhenClockAndTowersAgree() {
+        BattleStateMachine machine = new BattleStateMachine();
+        BattleCueDetector.Signals recognized = new BattleCueDetector.Signals(
+                0.78, 0.0, 0.82, 0.86, 0.72, 0.78, 0.0, 0.64, 3, 3);
+        assertEquals(BattleStateMachine.State.BATTLE_CANDIDATE,
+                machine.update(recognized, 1_000).state);
+        assertEquals(BattleStateMachine.State.VERIFYING,
+                machine.update(recognized, 1_500).state);
+        assertTrue(machine.update(recognized, 2_200).enteredBattle);
+    }
 }

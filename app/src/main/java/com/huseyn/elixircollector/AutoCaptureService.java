@@ -9,6 +9,7 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
@@ -19,8 +20,10 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.WindowManager;
+import android.view.WindowMetrics;
 
 /** MediaProjection owner. Playback audio is an optional sidecar, never a capture dependency. */
 public final class AutoCaptureService extends Service {
@@ -31,6 +34,10 @@ public final class AutoCaptureService extends Service {
     private static final String CHANNEL = "royalevision_v6_capture";
     private static final int NOTIFICATION_ID = 9601;
     private static final long ANALYZE_EVERY_NS = 100_000_000L;
+    private static final String HIDDEN_APP_MESSAGE =
+            "Shared app is not visible; tracking is paused until it returns";
+    private static final String NO_FRAMES_MESSAGE =
+            "Screen sharing started but no usable app frames arrived";
 
     private MediaProjection projection;
     private VirtualDisplay display;
@@ -44,7 +51,26 @@ public final class AutoCaptureService extends Service {
     private volatile AudioEvidenceEngine.Fingerprint latestAudio;
     private long lastAnalysisNs;
     private int frameErrors;
+    private int invalidFrames;
     private boolean destroying;
+    private String stopReason;
+    private boolean receivedFrame;
+    private long captureStartedElapsed;
+    private int captureWidth, captureHeight, captureDpi;
+    private int pendingResizeWidth, pendingResizeHeight;
+
+    private final Runnable captureHeartbeat = new Runnable() {
+        @Override public void run() {
+            if (destroying || projection == null || analysisHandler == null) return;
+            store.touchCapture();
+            if (!receivedFrame && captureStartedElapsed > 0L
+                    && SystemClock.elapsedRealtime() - captureStartedElapsed >= 6_000L
+                    && store.lastError().isEmpty()) {
+                store.reportNonFatalError(NO_FRAMES_MESSAGE);
+            }
+            analysisHandler.postDelayed(this, 1_000L);
+        }
+    };
 
     @Override public void onCreate() {
         super.onCreate();
@@ -65,8 +91,14 @@ public final class AutoCaptureService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        startCaptureForeground();
-        if (projection != null) return START_STICKY;
+        try {
+            startCaptureForeground();
+        } catch (RuntimeException error) {
+            stopWithReason("Capture foreground service blocked: "
+                    + error.getClass().getSimpleName());
+            return START_NOT_STICKY;
+        }
+        if (projection != null) return START_NOT_STICKY;
         if (intent == null) {
             stopWithReason("Capture permission missing");
             return START_NOT_STICKY;
@@ -90,17 +122,32 @@ public final class AutoCaptureService extends Service {
             projection.registerCallback(new MediaProjection.Callback() {
                 @Override public void onStop() {
                     if (!destroying) {
-                        store.stopped("Android stopped screen capture");
+                        stopReason = "Android stopped screen capture";
+                        store.stopped(stopReason);
                         stopSelf();
                     }
                 }
+
+                @Override public void onCapturedContentResize(int width, int height) {
+                    if (width <= 0 || height <= 0) return;
+                    pendingResizeWidth = width;
+                    pendingResizeHeight = height;
+                    if (display != null) resizeVirtualDisplay(width, height);
+                }
+
+                @Override public void onCapturedContentVisibilityChanged(boolean isVisible) {
+                    if (!isVisible) store.reportNonFatalError(HIDDEN_APP_MESSAGE);
+                    else store.clearErrorIf(HIDDEN_APP_MESSAGE);
+                }
             }, analysisHandler);
             createVirtualDisplay();
+            captureStartedElapsed = SystemClock.elapsedRealtime();
+            analysisHandler.post(captureHeartbeat);
             // AudioPlaybackCapture internally catches setup failures. This outer
             // guard ensures even vendor-specific RuntimeExceptions are isolated.
             try { audio.start(projection); }
             catch (RuntimeException ignored) { audioAvailable = false; }
-            return START_STICKY;
+            return START_NOT_STICKY;
         } catch (RuntimeException error) {
             stopWithReason("Capture setup error: " + error.getClass().getSimpleName());
             return START_NOT_STICKY;
@@ -119,15 +166,64 @@ public final class AutoCaptureService extends Service {
     private void createVirtualDisplay() {
         DisplayMetrics metrics = new DisplayMetrics();
         WindowManager windows = (WindowManager)getSystemService(WINDOW_SERVICE);
-        windows.getDefaultDisplay().getRealMetrics(metrics);
-        int width = Math.max(360, metrics.widthPixels);
-        int height = Math.max(640, metrics.heightPixels);
+        int width, height;
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowMetrics windowMetrics = windows.getMaximumWindowMetrics();
+            Rect bounds = windowMetrics.getBounds();
+            width = bounds.width();
+            height = bounds.height();
+            metrics = getResources().getDisplayMetrics();
+        } else {
+            windows.getDefaultDisplay().getRealMetrics(metrics);
+            width = metrics.widthPixels;
+            height = metrics.heightPixels;
+        }
+        if (pendingResizeWidth > 0 && pendingResizeHeight > 0) {
+            width = pendingResizeWidth;
+            height = pendingResizeHeight;
+        }
+        width = Math.max(200, width);
+        height = Math.max(300, height);
         int dpi = Math.max(160, metrics.densityDpi);
-        reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        captureWidth = width;
+        captureHeight = height;
+        captureDpi = dpi;
+        reader = newReader(width, height);
         reader.setOnImageAvailableListener(this::onImage, analysisHandler);
         display = projection.createVirtualDisplay("RoyaleVisionV6", width, height, dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 reader.getSurface(), null, analysisHandler);
+        if (display == null) throw new IllegalStateException("Virtual display was not created");
+    }
+
+    private ImageReader newReader(int width, int height) {
+        return ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+    }
+
+    /** Keep the analysis surface matched to Android 14+ single-app sharing. */
+    private void resizeVirtualDisplay(int requestedWidth, int requestedHeight) {
+        int width = Math.max(200, requestedWidth);
+        int height = Math.max(300, requestedHeight);
+        if (display == null || reader == null
+                || (width == captureWidth && height == captureHeight)) return;
+        ImageReader replacement = null;
+        try {
+            replacement = newReader(width, height);
+            replacement.setOnImageAvailableListener(this::onImage, analysisHandler);
+            display.resize(width, height, captureDpi);
+            display.setSurface(replacement.getSurface());
+            ImageReader old = reader;
+            reader = replacement;
+            replacement = null;
+            captureWidth = width;
+            captureHeight = height;
+            old.setOnImageAvailableListener(null, null);
+            old.close();
+            engine.resetCapture();
+        } catch (RuntimeException error) {
+            if (replacement != null) replacement.close();
+            store.reportNonFatalError("Capture resize failed: " + error.getClass().getSimpleName());
+        }
     }
 
     private void onImage(ImageReader source) {
@@ -139,7 +235,17 @@ public final class AutoCaptureService extends Service {
             if (nowNs - lastAnalysisNs < ANALYZE_EVERY_NS) return;
             lastAnalysisNs = nowNs;
             ImagePixelFrame frame = new ImagePixelFrame(image);
-            if (!frame.valid()) return;
+            if (!frame.valid()) {
+                invalidFrames++;
+                if (invalidFrames >= 8) {
+                    store.reportNonFatalError("Unsupported screen-capture frame format");
+                    invalidFrames = 0;
+                }
+                return;
+            }
+            invalidFrames = 0;
+            receivedFrame = true;
+            store.clearErrorIf(NO_FRAMES_MESSAGE);
             SessionSnapshot snapshot = engine.process(frame, System.currentTimeMillis(),
                     audioAvailable, latestAudio);
             store.publish(snapshot);
@@ -164,7 +270,7 @@ public final class AutoCaptureService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
-        return builder.setContentTitle("RoyaleVision v6")
+        return builder.setContentTitle("RoyaleVision v6.1")
                 .setContentText("Adaptive on-device visual tracking")
                 .setSmallIcon(R.drawable.ic_notification_elixir)
                 .setContentIntent(openIntent)
@@ -184,14 +290,18 @@ public final class AutoCaptureService extends Service {
     }
 
     private void stopWithReason(String reason) {
+        stopReason = reason;
         store.stopped(reason);
         stopSelf();
     }
 
     @Override public void onDestroy() {
         destroying = true;
-        store.stopped("RoyaleVision stopped");
+        if (analysisHandler != null) analysisHandler.removeCallbacks(captureHeartbeat);
+        if (stopReason == null || stopReason.isEmpty()) store.stopped("RoyaleVision stopped");
         if (audio != null) audio.stop();
+        latestAudio = null;
+        audioAvailable = false;
         if (reader != null) {
             try { reader.setOnImageAvailableListener(null, null); } catch (RuntimeException ignored) {}
         }

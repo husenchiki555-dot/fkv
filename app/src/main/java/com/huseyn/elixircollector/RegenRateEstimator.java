@@ -27,7 +27,7 @@ public final class RegenRateEstimator {
 
     private final ArrayDeque<Sample> samples = new ArrayDeque<>();
     private final ArrayDeque<Double> slopes = new ArrayDeque<>();
-    private Estimate current = new Estimate(0.50, 0.24, 1.25, 0.0);
+    private Estimate current = unknownEstimate();
 
     public Estimate update(ElixirBarTracker.Reading reading) {
         if (reading == null || !reading.hasValue() || reading.confidence < 0.52
@@ -41,7 +41,7 @@ public final class RegenRateEstimator {
             double dv = now.value - old.value;
             if (dt >= 0.42 && dt <= 2.80 && dv >= 0.075) {
                 double slope = dv / dt;
-                if (slope >= 0.18 && slope <= 1.38) slopes.addLast(slope);
+                if (slope >= 0.18 && slope <= 3.20) slopes.addLast(slope);
             }
         }
         samples.addLast(now);
@@ -60,7 +60,7 @@ public final class RegenRateEstimator {
             double confidence = countConfidence * 0.55 + stability * 0.45;
             double spread = Math.max(0.045, median * (0.10 + (1.0 - confidence) * 0.32));
             current = new Estimate(median, Math.max(0.16, median - spread),
-                    Math.min(1.55, median + spread), confidence);
+                    Math.min(3.35, median + spread), confidence);
         }
         return current;
     }
@@ -70,7 +70,11 @@ public final class RegenRateEstimator {
     public void reset() {
         samples.clear();
         slopes.clear();
-        current = new Estimate(0.50, 0.24, 1.25, 0.0);
+        current = unknownEstimate();
+    }
+
+    private static Estimate unknownEstimate() {
+        return new Estimate(0.50, 0.18, 3.20, 0.0);
     }
 
     private static double median(ArrayList<Double> sorted) {

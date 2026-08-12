@@ -140,6 +140,15 @@ public final class DeckCalibrationActivity extends Activity {
             forms.remove(baseId(id));
         } else {
             if(selected.size()>=8) { Toast.makeText(this,"Your deck already has 8 cards",Toast.LENGTH_SHORT).show(); return; }
+            CardCatalog.Card added = CardCatalog.find(id);
+            for (String existingId : selected) {
+                CardCatalog.Card existing = CardCatalog.find(existingId);
+                if (added != null && existing != null && added.deckId.equals(existing.deckId)) {
+                    Toast.makeText(this, "That is another form of a card already selected",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+            }
             selected.add(id);
             forms.putIfAbsent(baseId(id), SpecialFormCalibration.Form.NORMAL);
         }
@@ -229,7 +238,10 @@ public final class DeckCalibrationActivity extends Activity {
         ArrayList<String> out=new ArrayList<>();
         if(raw==null||raw.length()==0)return out;
         Set<String> seen=new HashSet<>();
-        for(String s:raw.split(",")) if(s.length()>0&&!seen.contains(s)){out.add(s);seen.add(s);}
+        for(String s:raw.split(",")) {
+            CardCatalog.Card card=CardCatalog.find(s);
+            if(card!=null&&!seen.contains(card.deckId)&&out.size()<8){out.add(card.id);seen.add(card.deckId);}
+        }
         return out;
     }
 

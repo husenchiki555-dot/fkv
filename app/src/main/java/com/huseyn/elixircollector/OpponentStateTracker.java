@@ -78,7 +78,7 @@ public final class OpponentStateTracker {
     private double maxElixir;
     private double bestElixir = Double.NaN;
     private double anchorQuality;
-    private RegenRateEstimator.Estimate regen = new RegenRateEstimator.Estimate(0.50, 0.24, 1.25, 0.0);
+    private RegenRateEstimator.Estimate regen = new RegenRateEstimator.Estimate(0.50, 0.18, 3.20, 0.0);
     private final ArrayList<Event> events = new ArrayList<>();
     private final LinkedHashMap<String, KnownCard> known = new LinkedHashMap<>();
     private int cycleCount;
@@ -129,13 +129,14 @@ public final class OpponentStateTracker {
                                 double identityConfidence, double eventConfidence) {
         if (!active) return null;
         advance(timeMs);
-        String cardId = canonical(proposedCardId);
+        CardCatalog.Card proposedCard = CardCatalog.find(proposedCardId);
+        String cardId = proposedCard == null ? null : proposedCard.deckId;
         if (cardId != null && !canPlay(cardId)) {
             cardId = null;
+            proposedCard = null;
             identityConfidence = 0.0;
         }
-        CardCatalog.Card card = CardCatalog.find(proposedCardId);
-        if (cost <= 0 && card != null && !card.mirror) cost = card.cost;
+        if (cost <= 0 && proposedCard != null && !proposedCard.mirror) cost = proposedCard.cost;
         int minCost = cost >= 1 ? cost : 0;
         int maxCost = cost >= 1 ? cost : 10;
         applySpend(minCost, maxCost);
@@ -143,7 +144,7 @@ public final class OpponentStateTracker {
         int index = cycleCount++;
         if (cardId != null) {
             KnownCard entry = known.get(cardId);
-            String display = card == null ? cardId.replace('_', ' ') : card.displayName;
+            String display = proposedCard == null ? cardId.replace('_', ' ') : proposedCard.displayName;
             if (entry == null && known.size() < 8) {
                 entry = new KnownCard(cardId, display, index, identityConfidence);
                 known.put(cardId, entry);
@@ -258,6 +259,6 @@ public final class OpponentStateTracker {
     private static String canonical(String id) {
         if (id == null || id.isEmpty()) return null;
         CardCatalog.Card card = CardCatalog.find(id);
-        return card == null ? id : card.deckId;
+        return card == null ? null : card.deckId;
     }
 }

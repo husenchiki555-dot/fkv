@@ -26,9 +26,31 @@ public final class BattleStateMachine {
 
     public Update update(BattleCueDetector.Signals s, long nowMs) {
         if (stateSince == 0L) stateSince = nowMs;
-        boolean hand = s != null && s.handScore >= 0.43;
-        boolean positive = s != null && hand && s.corroboratingSensors >= 2 && s.composite >= 0.52;
-        boolean strong = s != null && hand && s.corroboratingSensors >= 3 && s.composite >= 0.62;
+        boolean hand = s != null && s.handScore >= 0.50;
+        boolean railAnchor = s != null && s.elixirScore >= 0.58;
+        boolean recognitionAnchor = s != null && s.recognizedHandSlots >= 2;
+        boolean timer = s != null && s.timerScore >= 0.55;
+        boolean towers = s != null && s.crownScore >= 0.55;
+        // Arena texture and layout stability support confidence, but they are
+        // correlated/generic and cannot independently turn a menu into a match.
+        // Without an Elixir rail, calibrated artwork must agree with BOTH clock
+        // and tower layout; this keeps match detection separate from rail lock
+        // without making two recognized cards sufficient on their own.
+        boolean anchoredHud = railAnchor && (timer || towers)
+                || recognitionAnchor && timer && towers;
+        // Starting a session is intentionally stricter than sustaining one.
+        // The deck-calibration screen in 10665.mp4 contains four artwork tiles,
+        // a purple horizontal accent, and timer-like text; it can satisfy the
+        // relaxed rail+timer gate for several seconds.  A real battle opening
+        // also has the ordered red/blue tower-health layout, so require that
+        // independent anchor before leaving OUTSIDE_BATTLE.  Once latched, the
+        // normal relaxed gate tolerates tower bars being covered by effects.
+        boolean entryAnchor = timer && towers && (railAnchor || recognitionAnchor);
+        boolean positive = s != null && hand && anchoredHud && s.composite >= 0.50;
+        boolean entryPositive = s != null && hand && entryAnchor && s.composite >= 0.50;
+        boolean strong = s != null && hand && anchoredHud
+                && (timer && towers || recognitionAnchor && (timer || towers))
+                && s.composite >= 0.61;
         boolean absent = s == null || s.composite < 0.26 || s.handScore < 0.20;
         if (positive) lastPositive = nowMs;
         confidence = confidence * 0.72 + (s == null ? 0.0 : s.composite) * 0.28;
@@ -36,7 +58,7 @@ public final class BattleStateMachine {
 
         switch (state) {
             case OUTSIDE_BATTLE:
-                if (positive) transition(State.BATTLE_CANDIDATE, nowMs);
+                if (entryPositive) transition(State.BATTLE_CANDIDATE, nowMs);
                 break;
             case BATTLE_CANDIDATE:
                 if (positive && nowMs - stateSince >= 420) transition(State.VERIFYING, nowMs);

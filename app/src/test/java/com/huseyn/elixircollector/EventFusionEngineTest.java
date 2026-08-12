@@ -40,4 +40,40 @@ public class EventFusionEngineTest {
         assertEquals(4, events.get(0).cost);
         assertNull(events.get(0).localCardId);
     }
+
+    @Test public void strongBirthAndSoundCommitUnknownPlayWhenBadgeIsHidden() {
+        EventFusionEngine engine = new EventFusionEngine();
+        AudioEvidenceEngine.Fingerprint audio = new AudioEvidenceEngine.Fingerprint(
+                2_200, 3.8, 0.12, 0.8, new double[]{0.1, 0.2});
+        ArenaMotionDetector.Observation first = new ArenaMotionDetector.Observation(
+                0.035, 0.84, 0.82, true, false, 0.46, 0.40,
+                new FrameRect(0.40,0.34,0.51,0.48), 2, 2_000);
+        assertTrue(engine.update(true, null, null, first, null, audio, 2_020).isEmpty());
+        ArenaMotionDetector.Observation persistent = new ArenaMotionDetector.Observation(
+                0.030, 0.86, 0.86, true, false, 0.47, 0.41,
+                new FrameRect(0.41,0.35,0.52,0.49), 3, 2_200);
+        List<EventFusionEngine.GameEvent> events = engine.update(true, null, null,
+                persistent, null, audio, 2_220);
+        assertEquals(1, events.size());
+        assertEquals(EventFusionEngine.Kind.OPPONENT_CARD, events.get(0).kind);
+        assertEquals(0, events.get(0).cost);
+    }
+
+    @Test public void motionWithoutBadgeOrSoundDoesNotInventAnOpponentPlay() {
+        EventFusionEngine engine = new EventFusionEngine();
+        ArenaMotionDetector.Observation motion = new ArenaMotionDetector.Observation(
+                0.03, 0.90, 0.91, true, false, 0.46, 0.40,
+                new FrameRect(0.40,0.34,0.51,0.48), 4, 2_000);
+        assertTrue(engine.update(true, null, null, motion, null, null, 2_400).isEmpty());
+    }
+
+    @Test public void missingCoordinatesCannotAssociateAnUnrelatedBadge() {
+        EventFusionEngine engine = new EventFusionEngine();
+        ArenaMotionDetector.Observation motion = new ArenaMotionDetector.Observation(
+                0.03, 0.90, 0.91, true, false, Double.NaN, Double.NaN,
+                new FrameRect(0.40,0.34,0.51,0.48), 4, 2_000);
+        CostBadgeDetector.Detection badge = new CostBadgeDetector.Detection(6, 0.95,
+                0, 0, Double.NaN, Double.NaN, null, 2_000);
+        assertTrue(engine.update(true, null, null, motion, badge, null, 2_050).isEmpty());
+    }
 }

@@ -12,6 +12,9 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.widget.Button;
@@ -29,6 +32,8 @@ public final class AutoMainActivity extends Activity {
     private TextView overlayBadge, captureBadge, deckBadge, audioBadge;
     private boolean openGameAfterPermission;
     private boolean pendingStart;
+    private boolean pendingProjectionRequest;
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -51,7 +56,7 @@ public final class AutoMainActivity extends Activity {
         LinearLayout hero = box(Color.rgb(42, 24, 58), Color.rgb(140, 73, 188));
         hero.setGravity(Gravity.CENTER);
         page.addView(hero, match(12));
-        TextView title = text("ROYALEVISION v6", 26, Color.WHITE, true);
+        TextView title = text("ROYALEVISION v6.1", 26, Color.WHITE, true);
         title.setGravity(Gravity.CENTER);
         hero.addView(title, match(4));
         TextView sub = text("adaptive hand + rail + arena + optional sound", 13,
@@ -83,7 +88,9 @@ public final class AutoMainActivity extends Activity {
         Button overlay = button("2 • ALLOW FLOATING WINDOW", Color.rgb(102, 53, 140));
         overlay.setOnClickListener(v -> requestOverlayPermission());
         page.addView(overlay, height(54, 8));
-        Button start = button("3 • START v6 + OPEN CLASH ROYALE", Color.rgb(156, 67, 205));
+        Button start = button(Build.VERSION.SDK_INT >= 34
+                ? "3 • START v6 • THEN CHOOSE CLASH ROYALE"
+                : "3 • START v6 + OPEN CLASH ROYALE", Color.rgb(156, 67, 205));
         start.setOnClickListener(v -> startAutomatic(true));
         page.addView(start, height(61, 8));
         Button startOnly = button("START v6 TRACKING ONLY", Color.rgb(51, 104, 163));
@@ -133,7 +140,7 @@ public final class AutoMainActivity extends Activity {
             requestPermissions(permissions.toArray(new String[0]), REQ_RUNTIME);
             return;
         }
-        beginCapture();
+        startOverlayThenCapture();
     }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions,
@@ -145,14 +152,52 @@ public final class AutoMainActivity extends Activity {
                 Toast.makeText(this, "Sound unavailable • visual tracking will continue normally",
                         Toast.LENGTH_LONG).show();
             }
-            beginCapture();
+            startOverlayThenCapture();
         }
     }
 
-    private void beginCapture() {
+    /** Start a visible overlay while this Activity is foreground, then request projection. */
+    private void startOverlayThenCapture() {
+        if (pendingProjectionRequest) return;
+        pendingProjectionRequest = true;
         stopService(new Intent(this, AutoCaptureService.class));
-        stopService(new Intent(this, AutoOverlayService.class));
-        new SnapshotStore(this).clearForStart();
+        SnapshotStore store = new SnapshotStore(this);
+        store.clearForStart();
+        store.setOverlayActive(false);
+        Intent overlay = new Intent(this, AutoOverlayService.class);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(overlay);
+            else startService(overlay);
+        } catch (RuntimeException error) {
+            pendingProjectionRequest = false;
+            store.reportNonFatalError("Could not start overlay: " + error.getClass().getSimpleName());
+            Toast.makeText(this, store.lastError(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        long deadline = SystemClock.elapsedRealtime() + 3_000L;
+        handler.postDelayed(() -> waitForOverlay(store, deadline), 180L);
+    }
+
+    /** Service startup is asynchronous and may take more than one UI frame. */
+    private void waitForOverlay(SnapshotStore store, long deadlineElapsedMs) {
+        if (store.overlayActive()) {
+            pendingProjectionRequest = false;
+            requestCapturePermission();
+            return;
+        }
+        if (SystemClock.elapsedRealtime() < deadlineElapsedMs) {
+            handler.postDelayed(() -> waitForOverlay(store, deadlineElapsedMs), 180L);
+            return;
+        }
+        pendingProjectionRequest = false;
+        String reason = store.lastError();
+        if (reason == null || reason.isEmpty()) reason = "Floating overlay did not become visible";
+        Toast.makeText(this, reason + ". Re-open floating-window settings and allow background pop-ups.",
+                Toast.LENGTH_LONG).show();
+        updateBadges();
+    }
+
+    private void requestCapturePermission() {
         MediaProjectionManager manager = (MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
         startActivityForResult(manager.createScreenCaptureIntent(), REQ_CAPTURE);
     }
@@ -161,22 +206,28 @@ public final class AutoMainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_CAPTURE) return;
         if (resultCode != RESULT_OK || data == null) {
+            new SnapshotStore(this).reportNonFatalError("Screen capture permission was not granted");
             Toast.makeText(this, "Screen capture permission was not granted", Toast.LENGTH_LONG).show();
             return;
         }
         Intent capture = new Intent(this, AutoCaptureService.class);
         capture.putExtra(AutoCaptureService.EXTRA_RESULT_CODE, resultCode);
         capture.putExtra(AutoCaptureService.EXTRA_RESULT_DATA, data);
-        Intent overlay = new Intent(this, AutoOverlayService.class);
-        if (Build.VERSION.SDK_INT >= 26) {
-            startForegroundService(capture);
-            startForegroundService(overlay);
-        } else {
-            startService(capture);
-            startService(overlay);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(capture);
+            else startService(capture);
+        } catch (RuntimeException error) {
+            String message = "Capture service failed: " + error.getClass().getSimpleName();
+            new SnapshotStore(this).reportNonFatalError(message);
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            return;
         }
-        Toast.makeText(this, "RoyaleVision v6 started", Toast.LENGTH_SHORT).show();
-        if (openGameAfterPermission) getWindow().getDecorView().postDelayed(this::openGame, 420);
+        Toast.makeText(this, "RoyaleVision v6.1 started", Toast.LENGTH_SHORT).show();
+        // Android 14+ app sharing already opens the app selected in the system
+        // picker. Launching it again 420 ms later caused a disruptive double-resume.
+        if (openGameAfterPermission && Build.VERSION.SDK_INT < 34) {
+            getWindow().getDecorView().postDelayed(this::openGame, 650);
+        }
         updateBadges();
     }
 
@@ -195,6 +246,11 @@ public final class AutoMainActivity extends Activity {
         new SnapshotStore(this).stopped("Stopped by user");
         Toast.makeText(this, "RoyaleVision stopped", Toast.LENGTH_SHORT).show();
         updateBadges();
+    }
+
+    @Override protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     private void openGame() {

@@ -15,7 +15,9 @@ public final class GameSessionEngine {
     private final OpponentCardIdentifier identifier;
     private int sessionId;
     private boolean preBattleActivity;
+    private boolean wasCandidatePhase;
     private boolean cleanAnchorWindow;
+    private long eventWarmupUntil;
     private String transientStatus = "";
     private long transientStatusUntil;
 
@@ -30,9 +32,16 @@ public final class GameSessionEngine {
         FrameAnalyzer.Result vision = analyzer.analyze(frame, nowMs, audioAvailable);
         boolean candidatePhase = vision.battle.state == BattleStateMachine.State.BATTLE_CANDIDATE
                 || vision.battle.state == BattleStateMachine.State.VERIFYING;
+        if (!candidatePhase && wasCandidatePhase
+                && vision.battle.state == BattleStateMachine.State.OUTSIDE_BATTLE) {
+            // A rejected candidate must not poison the opening anchor of the
+            // next real match with stale intro/menu activity.
+            preBattleActivity = false;
+        }
         if (candidatePhase && ((vision.handTransition != null && vision.handTransition.changed)
                 || (vision.elixir != null && vision.elixir.sharpDrop)
-                || (vision.arena != null && vision.arena.deploymentLike))) preBattleActivity = true;
+                || (vision.badge != null && vision.badge.confidence >= 0.55))) preBattleActivity = true;
+        wasCandidatePhase = candidatePhase;
 
         if (vision.battle.enteredBattle) {
             sessionId++;
@@ -42,6 +51,10 @@ public final class GameSessionEngine {
             audioProfiles.clear();
             cleanAnchorWindow = !preBattleActivity;
             preBattleActivity = false;
+            // Candidate entry already reset menu history, and the VERIFYING
+            // phase built a clean hand baseline. Accept the first real play;
+            // a fixed post-entry warm-up dropped fast opening deployments.
+            eventWarmupUntil = nowMs;
             setTransient("MATCH FOUND", nowMs, 900);
         }
 
@@ -52,15 +65,19 @@ public final class GameSessionEngine {
             opponent.setRegenRate(rate);
             boolean activityNow = (vision.handTransition != null && vision.handTransition.changed)
                     || (vision.elixir != null && vision.elixir.sharpDrop)
-                    || (vision.arena != null && vision.arena.deploymentLike);
+                    || (vision.badge != null && vision.badge.confidence >= 0.55);
             if (vision.elixir != null && vision.elixir.locked()) {
                 opponent.anchorFromLocal(nowMs, vision.elixir.value,
                         vision.elixir.confidence, cleanAnchorWindow && !activityNow);
             }
 
-            List<EventFusionEngine.GameEvent> events = fusion.update(true,
-                    vision.handTransition, vision.elixir, vision.arena, vision.badge,
-                    latestAudio, nowMs);
+            boolean eventWindowOpen = nowMs >= eventWarmupUntil;
+            List<EventFusionEngine.GameEvent> events = fusion.update(eventWindowOpen,
+                    eventWindowOpen ? vision.handTransition : null,
+                    eventWindowOpen ? vision.elixir : null,
+                    eventWindowOpen ? vision.arena : null,
+                    eventWindowOpen ? vision.badge : null,
+                    eventWindowOpen ? latestAudio : null, nowMs);
             for (EventFusionEngine.GameEvent event : events) apply(event, frame, nowMs);
             if (activityNow) cleanAnchorWindow = false;
         } else {
@@ -74,6 +91,7 @@ public final class GameSessionEngine {
             fusion.reset();
             audioProfiles.clear();
             cleanAnchorWindow = false;
+            eventWarmupUntil = 0L;
             setTransient("MATCH ENDED", nowMs, 1200);
         }
         return snapshot(vision, nowMs, audioAvailable);
@@ -86,7 +104,8 @@ public final class GameSessionEngine {
         regen.reset();
         audioProfiles.clear();
         identifier.clearVisualCache();
-        preBattleActivity = cleanAnchorWindow = false;
+        preBattleActivity = wasCandidatePhase = cleanAnchorWindow = false;
+        eventWarmupUntil = 0L;
         transientStatus = "";
         transientStatusUntil = 0L;
     }
@@ -110,7 +129,8 @@ public final class GameSessionEngine {
         String id = identity == null ? null : identity.cardId;
         double identityConfidence = identity == null ? 0.0 : identity.confidence;
         opponent.onOpponentCard(event.timeMs, id, event.cost, identityConfidence, event.confidence);
-        if (identity == null) setTransient("ENEMY ? −" + event.cost, nowMs, 1450);
+        if (identity == null) setTransient(event.cost > 0
+                ? "ENEMY ? −" + event.cost : "ENEMY PLAY • COST ?", nowMs, 1450);
         else {
             CardCatalog.Card card = CardCatalog.find(identity.cardId);
             setTransient("ENEMY " + (card == null ? identity.cardId : card.displayName).toUpperCase(),

@@ -1,4 +1,4 @@
-name: Build RoyaleVision v6 APK
+name: Build RoyaleVision v6.1 APK
 
 on:
   push:
@@ -52,30 +52,30 @@ jobs:
       - name: Run deterministic unit tests
         run: gradle --no-daemon testReleaseUnitTest
 
-      - name: Build signed release APK
-        run: gradle --no-daemon assembleRelease
+      - name: Build signed release and Android integration probe
+        run: gradle --no-daemon assembleRelease assembleDebug
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-v6.0.0.apk
+        run: cp app/build/outputs/apk/release/app-release.apk RoyaleVision-v6.1.0.apk
 
       - name: Verify package, alignment, signature, and assets
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-v6.0.0.apk | tee /tmp/badging.txt
-          grep -q "package: name='com.huseyn.elixircollector' versionCode='600' versionName='6.0.0'" /tmp/badging.txt
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-v6.0.0.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-v6.0.0.apk
-          unzip -l RoyaleVision-v6.0.0.apk | grep -q 'assets/cards/hog-rider.png'
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging RoyaleVision-v6.1.0.apk | tee /tmp/badging.txt
+          grep -q "package: name='com.huseyn.elixircollector' versionCode='610' versionName='6.1.0'" /tmp/badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 RoyaleVision-v6.1.0.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs RoyaleVision-v6.1.0.apk
+          unzip -l RoyaleVision-v6.1.0.apk | grep -q 'assets/cards/hog-rider.png'
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: RoyaleVision-v6.0.0-APK
-          path: RoyaleVision-v6.0.0.apk
+          name: RoyaleVision-v6.1.0-APK
+          path: RoyaleVision-v6.1.0.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Install and launch on Android 15 emulator
-        timeout-minutes: 9
+        timeout-minutes: 12
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -84,7 +84,19 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            adb install -r RoyaleVision-v6.0.0.apk
+            adb install -r RoyaleVision-v6.1.0.apk
             adb shell am start -W -n com.huseyn.elixircollector/.AutoMainActivity
             adb shell dumpsys package com.huseyn.elixircollector | grep -E "versionName|versionCode"
             adb shell dumpsys activity activities | grep -q 'com.huseyn.elixircollector/.AutoMainActivity'
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell appops set com.huseyn.elixircollector.debug SYSTEM_ALERT_WINDOW allow
+            adb logcat -c
+            adb shell am start -W -n com.huseyn.elixircollector.debug/com.huseyn.elixircollector.OverlayProbeActivity
+            for attempt in $(seq 1 12); do
+              if adb logcat -d -s RoyaleVisionProbe:I '*:S' | grep -q 'OVERLAY_ACTIVE'; then break; fi
+              sleep 1
+            done
+            adb logcat -d -s RoyaleVisionProbe:I RoyaleVisionProbe:E '*:S'
+            adb logcat -d -s RoyaleVisionProbe:I '*:S' | grep -q 'OVERLAY_ACTIVE'
+            adb shell dumpsys window windows | grep -q 'com.huseyn.elixircollector.debug'
+            adb shell am force-stop com.huseyn.elixircollector.debug

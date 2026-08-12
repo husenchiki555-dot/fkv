@@ -42,9 +42,15 @@ public final class AutoOverlayService extends Service {
     private TextView opponentText, statusText, detailText, sensorText, lastText;
     private final SlotView[] slots = new SlotView[8];
     private boolean expandedVisible;
+    private long lastHeartbeatMs;
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
+            long now = System.currentTimeMillis();
+            if (now - lastHeartbeatMs >= 800L) {
+                store.touchOverlay();
+                lastHeartbeatMs = now;
+            }
             refresh();
             handler.postDelayed(this, 180);
         }
@@ -62,16 +68,28 @@ public final class AutoOverlayService extends Service {
             return START_NOT_STICKY;
         }
         Notification notification = notification();
-        if (Build.VERSION.SDK_INT >= 34) startForeground(NOTIFICATION_ID, notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        else startForeground(NOTIFICATION_ID, notification);
+        try {
+            if (Build.VERSION.SDK_INT >= 34) startForeground(NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            else startForeground(NOTIFICATION_ID, notification);
+        } catch (RuntimeException error) {
+            store.reportNonFatalError("Overlay foreground service blocked: "
+                    + error.getClass().getSimpleName());
+            store.setOverlayActive(false);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            store.reportNonFatalError("Floating-window permission is not available");
+            store.setOverlayActive(false);
             stopSelf();
             return START_NOT_STICKY;
         }
         if (root == null) {
             showOverlay();
-            handler.post(ticker);
+            if (root != null) handler.post(ticker);
+        } else {
+            store.setOverlayActive(true);
         }
         return START_STICKY;
     }
@@ -97,8 +115,16 @@ public final class AutoOverlayService extends Service {
                 Color.argb(62, 190, 103, 232), 1));
         buildCompact();
         buildExpanded();
-        try { windows.addView(root, params); }
-        catch (RuntimeException error) { stopSelf(); }
+        try {
+            windows.addView(root, params);
+            store.setOverlayActive(true);
+            lastHeartbeatMs = System.currentTimeMillis();
+        } catch (RuntimeException error) {
+            store.reportNonFatalError("Overlay window failed: " + error.getClass().getSimpleName());
+            store.setOverlayActive(false);
+            root = null;
+            stopSelf();
+        }
     }
 
     private void buildCompact() {
@@ -194,7 +220,10 @@ public final class AutoOverlayService extends Service {
         SessionSnapshot snapshot = store.read();
         if (snapshot == null) {
             opponentText.setText("💧 ?");
-            statusText.setText(store.captureActive() ? "STARTING CAPTURE" : "AUTO OFF");
+            String error = store.lastError();
+            if (store.captureActive()) statusText.setText("STARTING CAPTURE");
+            else if (error != null && !error.isEmpty()) statusText.setText(error.toUpperCase(Locale.US));
+            else statusText.setText("OVERLAY READY • START CAPTURE");
             clearDeck();
             return;
         }
@@ -289,7 +318,7 @@ public final class AutoOverlayService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
-        return builder.setContentTitle("RoyaleVision v6 overlay")
+        return builder.setContentTitle("RoyaleVision v6.1 overlay")
                 .setContentText("Transparent opponent state overlay")
                 .setSmallIcon(R.drawable.ic_notification_elixir)
                 .setContentIntent(pending)
@@ -332,6 +361,7 @@ public final class AutoOverlayService extends Service {
 
     @Override public void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (store != null) store.setOverlayActive(false);
         if (windows != null && root != null) {
             try { windows.removeView(root); } catch (RuntimeException ignored) {}
         }

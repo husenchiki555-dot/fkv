@@ -42,4 +42,16 @@ public class OpponentStateTrackerTest {
         assertEquals(0, tracker.deckSlots().get(0).cardsUntilReturn);
         assertTrue(tracker.canPlay("miner"));
     }
+
+    @Test public void cycleRejectedIdentityCannotLeakItsCostIntoUnknownEvent() {
+        OpponentStateTracker tracker = new OpponentStateTracker();
+        tracker.start(1_000);
+        tracker.onOpponentCard(1_100, "miner", 3, 0.95, 0.90);
+        OpponentStateTracker.Event rejected = tracker.onOpponentCard(
+                1_300, "miner", 0, 0.95, 0.80);
+        assertNotNull(rejected);
+        assertNull(rejected.cardId);
+        assertEquals(0, rejected.costMin);
+        assertEquals(10, rejected.costMax);
+    }
 }

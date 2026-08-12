@@ -35,7 +35,7 @@ public final class ReplayAnalyzer {
         BattleCueDetector cues = new BattleCueDetector();
         BattleStateMachine battle = new BattleStateMachine();
         ArenaMotionDetector arena = new ArenaMotionDetector();
-        System.out.println("frame,time_ms,battle,battle_conf,hud,hand_score,rail,elixir,elixir_conf,timer,crown,arena,motion,deployment");
+        System.out.println("frame,time_ms,battle,battle_conf,hud,hand_score,hand_first,hand_spacing,hand_top,hand_height,rail,raw_elixir,elixir,elixir_conf,rail_geometry,rail_left,rail_right,rail_y,timer,crown,arena,motion,deployment");
         long frameDuration = Math.max(1L, Math.round(1000.0 / fps));
         for (int i = 0; i < frames.size(); i++) {
             BufferedImage image = read(frames.get(i));
@@ -44,14 +44,28 @@ public final class ReplayAnalyzer {
             HudLayoutTracker.Observation hud = hudTracker.update(frame);
             ElixirBarTracker.Reading elixir = elixirTracker.update(frame, hud, now);
             BattleCueDetector.Signals signal = cues.detect(frame, hud, elixir, false);
+            BattleStateMachine.State previousBattleState = battle.state();
             BattleStateMachine.Update state = battle.update(signal, now);
             ArenaMotionDetector.Observation motion = arena.update(frame, now);
             System.out.printf(Locale.US,
-                    "%d,%d,%s,%.3f,%s,%.3f,%s,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%s%n",
+                    "%d,%d,%s,%.3f,%s,%.3f,%s,%s,%s,%s,%s,%s,%s,%.3f,%.3f,%s,%s,%s,%.3f,%.3f,%.3f,%.3f,%s%n",
                     i, now, state.state, state.confidence, hud.state, signal.handScore,
-                    elixir.state, number(elixir.value), elixir.confidence,
+                    hud.layout == null ? "" : number(hud.layout.first()),
+                    hud.layout == null ? "" : number(hud.layout.spacing()),
+                    hud.layout == null ? "" : number(hud.layout.handTop),
+                    hud.layout == null ? "" : number(hud.layout.height()),
+                    elixir.state, number(elixir.rawValue), number(elixir.value), elixir.confidence,
+                    elixir.geometryScore,
+                    elixir.rail == null ? "" : number(elixir.rail.left),
+                    elixir.rail == null ? "" : number(elixir.rail.right),
+                    elixir.rail == null ? "" : number(elixir.rail.centerY()),
                     signal.timerScore, signal.crownScore, signal.arenaScore,
                     motion.changedFraction, motion.deploymentLike);
+            if (previousBattleState == BattleStateMachine.State.OUTSIDE_BATTLE
+                    && state.state == BattleStateMachine.State.BATTLE_CANDIDATE) {
+                hudTracker.resetForNewCapture();
+                elixirTracker.resetAll();
+            }
         }
     }
 

@@ -43,12 +43,25 @@ public final class FrameAnalyzer {
     public Result analyze(PixelFrame frame, long nowMs, boolean audioAvailable) {
         HudLayoutTracker.Observation hudObservation = hud.update(frame);
         ElixirBarTracker.Reading elixirReading = elixir.update(frame, hudObservation, nowMs);
-        BattleCueDetector.Signals signals = cues.detect(frame, hudObservation, elixirReading, audioAvailable);
-        BattleStateMachine.Update battleUpdate = battle.update(signals, nowMs);
-
         HandCardRecognizer.Result hand = handRecognizer.recognize(frame,
                 hudObservation == null ? null : hudObservation.layout);
-        HandStateTracker.Observation transition = handTracker.update(hand, nowMs);
+        BattleCueDetector.Signals signals = cues.detect(frame, hudObservation, elixirReading,
+                audioAvailable, hand == null ? 0 : hand.strongSlots);
+        BattleStateMachine.State previousBattleState = battle.state();
+        BattleStateMachine.Update battleUpdate = battle.update(signals, nowMs);
+        boolean newCandidate = previousBattleState == BattleStateMachine.State.OUTSIDE_BATTLE
+                && battleUpdate.state == BattleStateMachine.State.BATTLE_CANDIDATE;
+        if (newCandidate) {
+            // Throw away menu geometry and event history as soon as strict
+            // battle anchors appear. The following verification frames then
+            // establish a clean hand baseline before the first playable frame.
+            hud.resetForNewCapture();
+            elixir.resetAll();
+            handTracker.reset();
+            arena.reset();
+            badge.reset();
+        }
+        HandStateTracker.Observation transition = handTracker.update(newCandidate ? null : hand, nowMs);
         ArenaMotionDetector.Observation arenaObservation = arena.update(frame, nowMs);
         CostBadgeDetector.Detection cost = null;
         if (battleUpdate.state != BattleStateMachine.State.OUTSIDE_BATTLE

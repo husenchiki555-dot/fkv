@@ -39,20 +39,43 @@ public final class ElixirBarTracker {
 
     private static final double ACQUIRE = 0.54;
     private static final double KEEP = 0.43;
+    // Initial phone profile only. Global acquisition may move away from this
+    // seed; once measured, local search follows the tracked rail position.
+    private static final double RAIL_Y_SEED = 0.9815;
+    private static final double RAIL_Y_SEARCH_MIN = 0.952;
+    private static final double RAIL_Y_SEARCH_MAX = 0.993;
     private State state = State.SEARCHING;
     private Candidate tracked;
     private Candidate candidate;
     private int hits;
     private int misses;
+    private boolean hasSeenFilledRail;
+    private double railAnchorLeft = Double.NaN;
+    private double railAnchorRight = Double.NaN;
+    private double railAnchorY = Double.NaN;
     private double purpleHue = 0.82;
     private final ArrayDeque<Double> initialValues = new ArrayDeque<>();
     private double filtered = Double.NaN;
     private double pendingDrop = Double.NaN;
     private int pendingDropHits;
     private long lastValueMs;
+    private long lastSharpDropMs;
 
     public Reading update(PixelFrame frame, HudLayoutTracker.Observation hud, long nowMs) {
         if (frame == null || hud == null || hud.layout == null) return miss(nowMs);
+        if (tracked != null) {
+            FrameRect expected = hud.layout.expectedRail;
+            double expectedDistance = Math.abs(tracked.left - expected.left)
+                    + Math.abs(tracked.right - expected.right);
+            if (expectedDistance > 0.16) {
+                tracked = candidate = null;
+                hits = misses = 0;
+                hasSeenFilledRail = false;
+                clearGeometryAnchor();
+                clearValueState();
+                state = State.SEARCHING;
+            }
+        }
         Candidate best = tracked != null && misses < 8
                 ? search(frame, hud.layout, tracked, true)
                 : search(frame, hud.layout, null, false);
@@ -82,6 +105,13 @@ public final class ElixirBarTracker {
 
         Candidate active = tracked != null ? tracked : candidate;
         if (active == null) return empty(nowMs, state);
+        if (state == State.LOCKED && !active.empty) hasSeenFilledRail = true;
+        if (!hasGeometryAnchor() && state == State.LOCKED && !active.empty
+                && active.value >= 2.0 && active.geometry >= 0.60) {
+            railAnchorLeft = active.left;
+            railAnchorRight = active.right;
+            railAnchorY = active.y;
+        }
         if (active.hueSamples > 6 && active.score >= 0.60) {
             double delta = signedHueDelta(purpleHue, active.meanHue);
             purpleHue = wrapHue(purpleHue + delta * 0.08);
@@ -90,11 +120,7 @@ public final class ElixirBarTracker {
     }
 
     public void resetValueButKeepGeometry() {
-        filtered = Double.NaN;
-        pendingDrop = Double.NaN;
-        pendingDropHits = 0;
-        initialValues.clear();
-        lastValueMs = 0L;
+        clearValueState();
         if (tracked != null) {
             state = State.REACQUIRE;
             misses = 5;
@@ -105,10 +131,9 @@ public final class ElixirBarTracker {
         state = State.SEARCHING;
         tracked = candidate = null;
         hits = misses = 0;
-        filtered = pendingDrop = Double.NaN;
-        pendingDropHits = 0;
-        initialValues.clear();
-        lastValueMs = 0L;
+        hasSeenFilledRail = false;
+        clearGeometryAnchor();
+        clearValueState();
         purpleHue = 0.82;
     }
 
@@ -128,7 +153,11 @@ public final class ElixirBarTracker {
             double old = filtered;
             double delta = raw - old;
             if (delta <= -0.45) {
-                if (c.score >= 0.72) {
+                // A deployment animation can briefly hide every filled
+                // segment. Require two consecutive empty-rail observations
+                // before dropping an established positive value to zero.
+                boolean confirmEmpty = c.empty && old > 0.38;
+                if (c.score >= 0.72 && !confirmEmpty) {
                     filtered = raw;
                     pendingDrop = Double.NaN;
                     pendingDropHits = 0;
@@ -147,14 +176,24 @@ public final class ElixirBarTracker {
                 if (filtered < old - 0.38) {
                     sharp = true;
                     drop = old - filtered;
+                    lastSharpDropMs = nowMs;
                 }
             } else {
                 pendingDrop = Double.NaN;
                 pendingDropHits = 0;
                 double dt = lastValueMs <= 0 ? 0.10 : ColorMath.clamp((nowMs - lastValueMs) / 1000.0, 0.02, 1.0);
                 double target = raw;
-                if (delta > 0.0) target = Math.min(raw, old + 1.65 * dt + 0.16);
-                double alpha = Math.abs(target - old) < 0.18 ? 0.58 : (target > old ? 0.40 : 0.52);
+                // Standard, double/triple, and temporary high-speed modes all
+                // use the same visible rail. Keep the anti-jump filter, but do
+                // not cap a legitimate high-speed mode at standard rates.
+                boolean justSpent = lastSharpDropMs > 0L && nowMs - lastSharpDropMs < 700L;
+                if (delta > 0.0) {
+                    double riseRate = justSpent ? 3.25 : 5.0;
+                    double allowance = justSpent ? 0.12 : 0.28;
+                    target = Math.min(raw, old + riseRate * dt + allowance);
+                }
+                double alpha = Math.abs(target - old) < 0.18 ? 0.64
+                        : (target > old ? (justSpent ? 0.36 : 0.68) : 0.52);
                 filtered = old + (target - old) * alpha;
                 if (filtered > 9.84 && raw > 9.75) filtered = 10.0;
             }
@@ -179,6 +218,9 @@ public final class ElixirBarTracker {
         else {
             tracked = candidate = null;
             hits = 0;
+            hasSeenFilledRail = false;
+            clearGeometryAnchor();
+            clearValueState();
             state = State.SEARCHING;
         }
         double confidence = tracked == null ? 0.0 : Math.max(0.05, tracked.score * Math.exp(-misses * 0.22));
@@ -191,25 +233,62 @@ public final class ElixirBarTracker {
         return new Reading(s, Double.NaN, filtered, 0.0, 0.0, null, false, 0.0, nowMs);
     }
 
+    private void clearValueState() {
+        filtered = Double.NaN;
+        pendingDrop = Double.NaN;
+        pendingDropHits = 0;
+        initialValues.clear();
+        lastValueMs = 0L;
+        lastSharpDropMs = 0L;
+    }
+
+    private boolean hasGeometryAnchor() {
+        return !Double.isNaN(railAnchorLeft) && !Double.isNaN(railAnchorRight)
+                && !Double.isNaN(railAnchorY);
+    }
+
+    private void clearGeometryAnchor() {
+        railAnchorLeft = Double.NaN;
+        railAnchorRight = Double.NaN;
+        railAnchorY = Double.NaN;
+    }
+
     private Candidate search(PixelFrame f, HudLayoutTracker.Layout layout,
                              Candidate around, boolean local) {
         Candidate best = null;
-        double baseLeft = around == null ? layout.expectedRail.left : around.left;
-        double baseRight = around == null ? layout.expectedRail.right : around.right;
-        double startY = local ? around.y - 0.014 : layout.expectedRail.top;
-        double endY = local ? around.y + 0.014 : 0.994;
+        boolean anchored = hasGeometryAnchor();
+        double baseLeft = anchored ? railAnchorLeft
+                : (around == null ? layout.expectedRail.left : around.left);
+        double baseRight = anchored ? railAnchorRight
+                : (around == null ? layout.expectedRail.right : around.right);
+        double expectedY = anchored ? railAnchorY
+                : (around == null ? RAIL_Y_SEED : around.y);
+        double startY = anchored ? railAnchorY - 0.006
+                : (local ? around.y - 0.008
+                : Math.max(layout.expectedRail.top, RAIL_Y_SEARCH_MIN));
+        double endY = anchored ? railAnchorY + 0.006
+                : (local ? around.y + 0.008 : RAIL_Y_SEARCH_MAX);
         double[] endpointOffsets = local
                 ? new double[]{-0.014, -0.007, 0.0, 0.007, 0.014}
                 : new double[]{-0.032, -0.016, 0.0, 0.016, 0.032};
-        double yStep = local ? 0.0035 : 0.0055;
-        startY = ColorMath.clamp(startY, 0.875, 0.994);
-        endY = ColorMath.clamp(Math.max(startY, endY), startY, 0.996);
+        double yStep = local ? 0.0015 : 0.0025;
+        startY = ColorMath.clamp(startY, RAIL_Y_SEARCH_MIN, RAIL_Y_SEARCH_MAX);
+        endY = ColorMath.clamp(Math.max(startY, endY), startY, RAIL_Y_SEARCH_MAX);
+        // Once acquired, the rail itself is a better endpoint prior than the
+        // animated hand. This prevents card movement from walking a locked rail
+        // left or right over a long match.
+        FrameRect endpointPrior = anchored
+                ? new FrameRect(railAnchorLeft, RAIL_Y_SEARCH_MIN,
+                        railAnchorRight, RAIL_Y_SEARCH_MAX)
+                : (around == null ? layout.expectedRail
+                : new FrameRect(around.left, RAIL_Y_SEARCH_MIN,
+                        around.right, RAIL_Y_SEARCH_MAX));
         for (double dl : endpointOffsets) for (double dr : endpointOffsets) {
             double left = baseLeft + dl;
             double right = baseRight + dr;
             if (right - left < 0.42 || right - left > 0.82) continue;
             for (double y = startY; y <= endY; y += yStep) {
-                Candidate c = evaluate(f, left, right, y, layout.expectedRail);
+                Candidate c = evaluate(f, left, right, y, endpointPrior, expectedY);
                 if (c != null && (best == null || c.rank > best.rank)) best = c;
             }
         }
@@ -217,7 +296,7 @@ public final class ElixirBarTracker {
     }
 
     private Candidate evaluate(PixelFrame f, double left, double right, double y,
-                               FrameRect expected) {
+                               FrameRect expected, double expectedY) {
         final int n = 120;
         final int rows = 5;
         boolean[] supported = new boolean[n];
@@ -227,12 +306,13 @@ public final class ElixirBarTracker {
         double radius = Math.max(0.0015, 3.2 / Math.max(800.0, f.height()));
         for (int i = 0; i < n; i++) {
             double x = ColorMath.lerp(left, right, (i + 0.5) / n);
-            int hits = 0;
+            int hits = 0, coreHits = 0;
             for (int row = 0; row < rows; row++) {
                 double yy = y + (row - 2) * radius;
                 int rgb = f.rgbNormalized(x, yy);
                 if (isPurple(rgb)) {
                     hits++;
+                    if (isCorePurple(rgb)) coreHits++;
                     rowCounts[row]++;
                     double h = ColorMath.hue(rgb) * Math.PI * 2.0;
                     hueX += Math.cos(h);
@@ -240,7 +320,10 @@ public final class ElixirBarTracker {
                     hueN++;
                 }
             }
-            supported[i] = hits >= 2;
+            // Deployment flashes are pale pink and can cover the first two
+            // rail segments. A genuine fill has at least one saturated core
+            // sample through the five-row stripe.
+            supported[i] = hits >= 2 && coreHits >= 1;
         }
 
         // Bridge anti-aliased segment separators, but never long unrelated gaps.
@@ -258,7 +341,9 @@ public final class ElixirBarTracker {
             last = i;
             purple++;
         }
-        if (first < 0 || purple < 3 || first > 18) return null;
+        if (first < 0 || purple < 5 || first > 18) {
+            return evaluateEmpty(f, left, right, y, expected, expectedY);
+        }
 
         int holes = 0, stray = 0;
         for (int i = first; i <= last; i++) if (!supported[i]) holes++;
@@ -290,9 +375,58 @@ public final class ElixirBarTracker {
                 + rowConsistency * 0.23, 0.0, 1.0);
         double score = prefixScore * 0.29 + anchorScore * 0.19 + rowConsistency * 0.16
                 + edge * 0.16 + widthPrior * 0.12 + runSupport * 0.08;
+        double yPrior = Math.exp(-Math.abs(y - expectedY) * 95.0);
         double meanHue = hueN == 0 ? purpleHue : wrapHue(Math.atan2(hueY, hueX) / (Math.PI * 2.0));
         return new Candidate(left, right, y, value, ColorMath.clamp(score, 0.0, 1.0),
-                ColorMath.clamp(score + widthPrior * 0.025, 0.0, 1.05), geometry, meanHue, hueN);
+                ColorMath.clamp(score + widthPrior * 0.025 + yPrior * 0.13, 0.0, 1.18), geometry,
+                meanHue, hueN, false);
+    }
+
+    /**
+     * Zero Elixir contains no purple fill, so absence of purple cannot simply
+     * be treated as a lost rail. Confirm the blue/dark rail body and its edges
+     * before emitting an explicit zero-valued candidate.
+     */
+    private Candidate evaluateEmpty(PixelFrame f, double left, double right, double y,
+                                    FrameRect expected, double expectedY) {
+        // An empty blue strip is common on loading and deck screens. Zero is a
+        // valid observation only after this capture has first seen real purple
+        // fill at the same rail; otherwise remain SEARCHING/CALIBRATING.
+        if (!hasSeenFilledRail) return null;
+        int blue = 0, dark = 0, purple = 0;
+        final int columns = 54;
+        final int rows = 3;
+        for (int column = 0; column < columns; column++) {
+            // Ignore the first few percent where the number glyph overlaps the
+            // rail, but keep enough of the first segment to detect a real fill.
+            double x = ColorMath.lerp(left, right, 0.045 + 0.945 * (column + 0.5) / columns);
+            for (int row = 0; row < rows; row++) {
+                int rgb = f.rgbNormalized(x, y + (row - 1) * 0.0022);
+                double hue = ColorMath.hue(rgb);
+                double saturation = ColorMath.saturation(rgb);
+                double value = ColorMath.value(rgb);
+                if (isPurple(rgb)) purple++;
+                if (saturation >= 0.38 && value >= 0.12 && value <= 0.72
+                        && hue >= 0.50 && hue <= 0.70) blue++;
+                if (value <= 0.24) dark++;
+            }
+        }
+        int samples = columns * rows;
+        double body = ColorMath.clamp((blue + dark * 0.35) / (samples * 0.72), 0.0, 1.0);
+        if (purple > samples * 0.035 || body < 0.58) return null;
+
+        double radius = Math.max(0.0015, 3.2 / Math.max(800.0, f.height()));
+        double edge = railEdgeScore(f, left, right, y, radius * 3.5);
+        double expectedDelta = Math.abs(left - expected.left) + Math.abs(right - expected.right);
+        double widthPrior = Math.exp(-expectedDelta * 14.0);
+        double yPrior = Math.exp(-Math.abs(y - expectedY) * 95.0);
+        double geometry = ColorMath.clamp(edge * 0.32 + widthPrior * 0.36
+                + body * 0.32, 0.0, 1.0);
+        double score = ColorMath.clamp(body * 0.43 + edge * 0.22
+                + widthPrior * 0.23 + yPrior * 0.12, 0.0, 1.0);
+        return new Candidate(left, right, y, 0.0, score,
+                ColorMath.clamp(score + widthPrior * 0.025 + yPrior * 0.13, 0.0, 1.18),
+                geometry, purpleHue, 0, true);
     }
 
     private double railEdgeScore(PixelFrame f, double left, double right, double y, double dy) {
@@ -328,11 +462,24 @@ public final class ElixirBarTracker {
         return chroma && ColorMath.hueDistance(h, purpleHue) <= 0.155;
     }
 
+    private boolean isCorePurple(int rgb) {
+        double saturation = ColorMath.saturation(rgb);
+        double value = ColorMath.value(rgb);
+        if (saturation < 0.56 || value < 0.30) return false;
+        double hue = ColorMath.hue(rgb);
+        return ColorMath.hueDistance(hue, purpleHue) <= 0.115;
+    }
+
     private static Candidate blend(Candidate a, Candidate b, double t) {
-        return new Candidate(ColorMath.lerp(a.left, b.left, t), ColorMath.lerp(a.right, b.right, t),
-                ColorMath.lerp(a.y, b.y, t), b.value,
+        // An empty rail has no fill endpoint from which to refine geometry.
+        // Keep the last measured rail fixed until real fill returns; otherwise
+        // repeated zero frames walk the search window into the number glyph.
+        double left = b.empty ? a.left : ColorMath.lerp(a.left, b.left, t);
+        double right = b.empty ? a.right : ColorMath.lerp(a.right, b.right, t);
+        double y = b.empty ? a.y : ColorMath.lerp(a.y, b.y, t);
+        return new Candidate(left, right, y, b.value,
                 ColorMath.lerp(a.score, b.score, t), b.rank,
-                ColorMath.lerp(a.geometry, b.geometry, t), b.meanHue, b.hueSamples);
+                ColorMath.lerp(a.geometry, b.geometry, t), b.meanHue, b.hueSamples, b.empty);
     }
 
     private static double geometryDistance(Candidate a, Candidate b) {
@@ -363,8 +510,10 @@ public final class ElixirBarTracker {
     private static final class Candidate {
         final double left, right, y, value, score, rank, geometry, meanHue;
         final int hueSamples;
+        final boolean empty;
         Candidate(double left, double right, double y, double value, double score,
-                  double rank, double geometry, double meanHue, int hueSamples) {
+                  double rank, double geometry, double meanHue, int hueSamples,
+                  boolean empty) {
             this.left = left;
             this.right = right;
             this.y = y;
@@ -374,6 +523,7 @@ public final class ElixirBarTracker {
             this.geometry = geometry;
             this.meanHue = meanHue;
             this.hueSamples = hueSamples;
+            this.empty = empty;
         }
         FrameRect rect() { return new FrameRect(left, y - 0.006, right, y + 0.006); }
     }

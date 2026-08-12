@@ -132,6 +132,28 @@ public final class EventFusionEngine {
                 lastOpponentMs = pendingEnemy.lastMs;
                 recentBadge = null;
                 pendingEnemy = null;
+            } else if (pendingEnemy.badge == null && near != null
+                    && near.strength >= 2.15 && pendingEnemy.persistence >= 2
+                    && pendingEnemy.bestScore >= 0.68
+                    && nowMs - pendingEnemy.startMs >= 150
+                    && nowMs > localGuardUntil) {
+                // Tiny cost badges can disappear under large troops/buildings.
+                // Strong localized birth + a synchronous audio transient still
+                // proves an opponent play, but does not prove its cost or card.
+                // Commit an explicitly unknown event so cycle tracking advances
+                // without inventing Elixir or an identity.
+                double persistence = ColorMath.clamp(
+                        (pendingEnemy.persistence - 1.0) / 2.0, 0.0, 1.0);
+                double sound = ColorMath.clamp((near.strength - 2.15) / 2.50, 0.0, 1.0);
+                double fallbackConfidence = pendingEnemy.bestScore * 0.55
+                        + persistence * 0.20 + (0.55 + sound * 0.45) * 0.25;
+                if (fallbackConfidence >= 0.68) {
+                    out.add(new GameEvent(Kind.OPPONENT_CARD, pendingEnemy.lastMs, null,
+                            0, ColorMath.clamp(fallbackConfidence, 0.0, 1.0),
+                            pendingEnemy.region, near));
+                    lastOpponentMs = pendingEnemy.lastMs;
+                    pendingEnemy = null;
+                }
             } else if (nowMs - pendingEnemy.lastMs > 1250) pendingEnemy = null;
         }
         return out;
@@ -153,7 +175,13 @@ public final class EventFusionEngine {
     private static int clampCost(int cost) { return cost < 1 || cost > 10 ? 0 : cost; }
 
     private static double distance(double x1, double y1, double x2, double y2) {
-        if (Double.isNaN(x1) || Double.isNaN(y1) || Double.isNaN(x2) || Double.isNaN(y2)) return 0.0;
+        // Missing geometry must never be treated as a perfect spatial match.
+        if (Double.isNaN(x1) || Double.isInfinite(x1)
+                || Double.isNaN(y1) || Double.isInfinite(y1)
+                || Double.isNaN(x2) || Double.isInfinite(x2)
+                || Double.isNaN(y2) || Double.isInfinite(y2)) {
+            return Double.POSITIVE_INFINITY;
+        }
         return Math.hypot(x1 - x2, y1 - y2);
     }
 

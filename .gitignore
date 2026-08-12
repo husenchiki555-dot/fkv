@@ -6,3 +6,6 @@ local.properties
 *.iml
 .idea/
 royalevision-replay.csv
+/diag-*.csv
+/replay-*.csv
+/dist/

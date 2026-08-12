@@ -29,6 +29,17 @@ public class RegenAndFeatureTest {
         assertTrue(CardVisualFeatures.similarity(fa, fc) < 0.88);
     }
 
+    @Test public void learnsTemporaryHighSpeedRegeneration() {
+        RegenRateEstimator estimator = new RegenRateEstimator();
+        for (int i = 0; i < 10; i++) {
+            double value = 1.0 + i * 0.50;
+            estimator.update(new ElixirBarTracker.Reading(ElixirBarTracker.State.LOCKED,
+                    value, value, 0.92, 0.92, null, false, 0.0, 1_000 + i * 250L));
+        }
+        assertTrue(estimator.current().confidence > 0.35);
+        assertEquals(2.0, estimator.current().bestPerSecond, 0.25);
+    }
+
     private static PixelFrame pattern(final boolean swapped) {
         return new PixelFrame() {
             @Override public int width() { return 160; }

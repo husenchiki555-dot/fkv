@@ -1,6 +1,6 @@
-# ROYALEVISION v6
+# ROYALEVISION v6.1
 
-ROYALEVISION is an on-device Android visual overlay for Clash Royale. Version 6 replaces the stacked v5 patch scripts with a stateful computer-vision pipeline and an explicit hidden-state model.
+ROYALEVISION is an on-device Android visual overlay for Clash Royale. Version 6.1 replaces the stacked v5 patch scripts with a stateful computer-vision pipeline and an explicit hidden-state model.
 
 The app is unofficial and is not affiliated with or endorsed by Supercell.
 
@@ -13,7 +13,7 @@ The app is unofficial and is not affiliated with or endorsed by Supercell.
 - Keeps match detection separate from Elixir lock, so `MATCH FOUND • ELIXIR CALIBRATING` is a valid state.
 - Classifies each live hand slot only against the user's eight calibrated cards using spatial colour, histogram, and gradient features with global unique assignment.
 - Fuses stable hand transitions and sharp local-Elixir drops to mark local plays and suppress false opponent events.
-- Requires arena motion plus a cost-badge observation before committing an opponent play. Audio can strengthen an event but cannot mutate state by itself.
+- Commits an opponent play from arena motion plus a cost badge, or from an exceptionally strong localized birth synchronized with audio. The fallback advances cycle with unknown card/cost instead of inventing either.
 - Models opponent Elixir as `best/min/max/confidence`; it is never presented as directly observed.
 - Keeps exactly eight opponent deck slots, advances cycle on unknown plays, and leaves uncertain identities as `?`.
 - Continues visual tracking if Android playback-audio capture is denied, unavailable, silent, or fails at runtime.
@@ -44,7 +44,8 @@ The `royalevision-v6` GitHub Actions workflow:
 3. runs deterministic unit tests;
 4. builds a signed release APK;
 5. checks package/version, ZIP alignment, APK signatures, and bundled assets; and
-6. installs and launches the APK on an Android 15 emulator.
+6. installs and launches the APK on an Android 15 emulator; and
+7. starts a real application-overlay window and verifies its live heartbeat.
 
 For a local pure-Java check without Android SDK tooling, compile the core plus `tools/CoreSmokeHarness.java`. The same scenarios are represented as JUnit tests under `app/src/test`.
 
