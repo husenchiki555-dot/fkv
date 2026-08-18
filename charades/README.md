@@ -1,8 +1,8 @@
 # Party Charades (offline Android)
 
-Offline Android charades game with 50 built-in topics and 10,000 generated cards/prompts, tilt controls, custom timers up to 10:00, Easy/Normal/Hard/Mixed difficulty, age/theme filters, search, custom comma/newline-separated decks, same-phone team play, and local-network room-code scoring on the same Wi-Fi/hotspot.
+Offline Android charades game with 50 built-in topics and 10,000 audited cards/prompts, tilt controls, custom timers up to 10:00, Easy/Normal/Hard/Mixed difficulty, age/theme filters, search, custom comma/newline-separated decks, same-phone team play, and local-network room-code scoring on the same Wi-Fi/hotspot.
 
 ## Build notes
-The large Java/content sources are stored losslessly under `embedded/` as gzip+base64 text and unpacked by the GitHub Actions build before compilation. The APK is debug-signed for sideload testing using the dedicated Party Charades test key stored on this build branch, so later test builds can use the same signing identity for in-place updates.
+The APK now loads a fixed card database at runtime. Build validation generates that database from reviewed topic-specific phrase rules, verifies 50 topics, 200 unique cards per topic, difficulty counts, duplicates, malformed placeholders, and known nonsense patterns before compilation.
 
-Build marker: recovered-source vocabulary audit.
+Build marker: final clean-vocabulary validation.
