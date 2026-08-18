@@ -5,4 +5,4 @@ Offline Android charades game with 50 built-in topics and 10,000 generated cards
 ## Build notes
 The large Java/content sources are stored losslessly under `embedded/` as gzip+base64 text and unpacked by the GitHub Actions build before compilation. The APK is debug-signed for sideload testing using the dedicated Party Charades test key stored on this build branch, so later test builds can use the same signing identity for in-place updates.
 
-Build marker: independent vocabulary bundle diagnostics.
+Build marker: recovered-source vocabulary audit.
