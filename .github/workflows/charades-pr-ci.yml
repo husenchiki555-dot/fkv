@@ -1,0 +1,59 @@
+name: Party Charades PR Validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-charades:
+    if: ${{ startsWith(github.head_ref, 'charades') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Ensure Android SDK 35
+        run: yes | sdkmanager --licenses >/dev/null || true; sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Unpack Charades sources
+        run: |
+          mkdir -p charades/app/src/main/java/com/partycharades/offline charades/app/src/main/assets decoded-charades
+          base64 -d charades/embedded/MainActivity.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/MainActivity.java
+          base64 -d charades/embedded/PartyManager.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/PartyManager.java
+          base64 -d charades/embedded/topic_seeds.json.gz.b64 | gzip -dc > charades/app/src/main/assets/topic_seeds.json
+          cp charades/app/src/main/java/com/partycharades/offline/MainActivity.java decoded-charades/MainActivity.java
+          cp charades/app/src/main/assets/topic_seeds.json decoded-charades/topic_seeds.json
+
+      - name: Upload decoded content audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: charades-decoded-content
+          path: decoded-charades
+
+      - name: Restore stable signing key
+        run: |
+          mkdir -p "$HOME/.android"
+          base64 -d charades/signing/debug.keystore.b64 > "$HOME/.android/debug.keystore"
+
+      - name: Build APK
+        working-directory: charades
+        run: gradle :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PartyCharades-PR-debug-apk
+          path: charades/app/build/outputs/apk/debug/app-debug.apk
