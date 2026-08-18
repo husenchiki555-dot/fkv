@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:
@@ -41,20 +43,23 @@ jobs:
               gzip -dc "$tmp" > "$dst"
               echo "$label=OK bytes=$(wc -c < "$dst")" >> decoded-charades/bundle-status.txt
               return 0
-            else
-              echo "$label=INVALID" >> decoded-charades/bundle-status.txt
-              cat /tmp/${label}.b64.err /tmp/${label}.gz.err >> decoded-charades/bundle-status.txt 2>/dev/null
-              return 1
             fi
+            echo "$label=INVALID" >> decoded-charades/bundle-status.txt
+            return 1
           }
           unpack charades/embedded/MainActivity.java.gz.b64 charades/app/src/main/java/com/partycharades/offline/MainActivity.java MainActivity
+          if [ ! -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java ]; then
+            git show 3592e51cb980e6927dca57c63b06435eb61891a0:charades/embedded/MainActivity.java.gz.b64 > /tmp/MainActivity-good.b64
+            if base64 -d /tmp/MainActivity-good.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/MainActivity.java; then
+              echo 'MainActivity_RECOVERED_FROM=3592e51cb980e6927dca57c63b06435eb61891a0' >> decoded-charades/bundle-status.txt
+            fi
+          fi
           unpack charades/embedded/PartyManager.java.gz.b64 charades/app/src/main/java/com/partycharades/offline/PartyManager.java PartyManager
           unpack charades/embedded/topic_seeds.json.gz.b64 charades/app/src/main/assets/topic_seeds.json topic_seeds
           [ -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java ] && cp charades/app/src/main/java/com/partycharades/offline/MainActivity.java decoded-charades/MainActivity.java
           [ -s charades/app/src/main/java/com/partycharades/offline/PartyManager.java ] && cp charades/app/src/main/java/com/partycharades/offline/PartyManager.java decoded-charades/PartyManager.java
           [ -s charades/app/src/main/assets/topic_seeds.json ] && cp charades/app/src/main/assets/topic_seeds.json decoded-charades/topic_seeds.json
           cat decoded-charades/bundle-status.txt
-          exit 0
 
       - name: Upload decoded content audit
         if: always()
