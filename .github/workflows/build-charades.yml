@@ -63,6 +63,19 @@ jobs:
           fi
           exit 0
 
+      - name: Verify APK package, alignment and signature
+        if: ${{ hashFiles('charades/app/build/outputs/apk/debug/app-debug.apk') != '' }}
+        shell: bash
+        run: |
+          {
+            echo '=== PACKAGE ==='
+            "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging charades/app/build/outputs/apk/debug/app-debug.apk | head -n 20
+            echo '=== ALIGNMENT ==='
+            "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 charades/app/build/outputs/apk/debug/app-debug.apk
+            echo '=== SIGNATURE ==='
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs charades/app/build/outputs/apk/debug/app-debug.apk
+          } 2>&1 | tee charades/build-output/apk-verify.txt
+
       - name: Upload APK artifact
         if: ${{ hashFiles('charades/app/build/outputs/apk/debug/app-debug.apk') != '' }}
         uses: actions/upload-artifact@v4
