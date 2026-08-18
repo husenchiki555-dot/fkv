@@ -32,33 +32,24 @@ jobs:
 
       - name: Unpack offline sources
         run: |
-          mkdir -p charades/app/src/main/java/com/partycharades/offline charades/app/src/main/assets
+          mkdir -p charades/app/src/main/java/com/partycharades/offline charades/app/src/main/assets charades/build-output
           base64 -d charades/embedded/MainActivity.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/MainActivity.java
           base64 -d charades/embedded/PartyManager.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/PartyManager.java
           base64 -d charades/embedded/topic_seeds.json.gz.b64 | gzip -dc > charades/app/src/main/assets/topic_seeds.json
           test -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java
           test -s charades/app/src/main/assets/topic_seeds.json
 
-      - name: Audit content generation
-        shell: bash
+      - name: Generate and audit final card database
         run: |
-          mkdir -p charades/build-output
-          python3 - <<'PY' > charades/build-output/content-audit.txt
-          import json, re
-          p='charades/app/src/main/assets/topic_seeds.json'
-          data=json.load(open(p, encoding='utf-8'))
-          print('TOP_LEVEL_TYPE', type(data).__name__)
-          if isinstance(data, dict): print('TOP_LEVEL_KEYS', list(data.keys()))
-          elif isinstance(data, list): print('TOP_LEVEL_LEN', len(data))
-          print('\n=== FIRST TOPIC ===')
-          first = data[0] if isinstance(data,list) else next(iter(data.values()))
-          print(json.dumps(first, ensure_ascii=False, indent=2)[:12000])
-          print('\n=== JAVA GENERATION LINES ===')
-          src=open('charades/app/src/main/java/com/partycharades/offline/MainActivity.java',encoding='utf-8').read().splitlines()
-          needles=('template','using ','cleaning ','act out','describe ','guess ','seed','prompt','difficulty')
-          for i,line in enumerate(src,1):
-              low=line.lower()
-              if any(n in low for n in needles): print(f'{i}: {line}')
+          python3 charades/scripts/generate_clean_cards.py charades/app/src/main/assets/topic_seeds.json charades/app/src/main/assets/topic_seeds.json | tee charades/build-output/content-audit.txt
+          python3 - <<'PY'
+          import json
+          d=json.load(open('charades/app/src/main/assets/topic_seeds.json',encoding='utf-8'))
+          assert len(d)==50
+          assert all(len(t['cards'])==200 for t in d)
+          assert sum(len(t['cards']) for t in d)==10000
+          assert not any('seeds' in t for t in d)
+          print('FINAL ASSET VERIFIED')
           PY
 
       - name: Restore stable Party Charades signing key
