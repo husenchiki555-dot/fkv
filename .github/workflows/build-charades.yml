@@ -5,7 +5,6 @@ on:
     branches: [charades-build-v1]
     paths-ignore:
       - 'charades/build-output/**'
-      - 'charades/signing/**'
   workflow_dispatch:
 
 permissions:
@@ -40,12 +39,11 @@ jobs:
           test -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java
           test -s charades/app/src/main/assets/topic_seeds.json
 
-      - name: Restore stable test signing key
+      - name: Restore stable Party Charades signing key
         run: |
-          if [ -f charades/signing/debug.keystore ]; then
-            mkdir -p "$HOME/.android"
-            cp charades/signing/debug.keystore "$HOME/.android/debug.keystore"
-          fi
+          mkdir -p "$HOME/.android"
+          base64 -d charades/signing/debug.keystore.b64 > "$HOME/.android/debug.keystore"
+          test -s "$HOME/.android/debug.keystore"
 
       - name: Build installable APK and capture diagnostics
         working-directory: charades
@@ -84,20 +82,16 @@ jobs:
           path: charades/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Save diagnostics, APK, and signing key on build branch
+      - name: Save diagnostics and APK on build branch
         shell: bash
         run: |
-          mkdir -p charades/build-output charades/signing
+          mkdir -p charades/build-output
           if [ -f charades/app/build/outputs/apk/debug/app-debug.apk ]; then
             cp charades/app/build/outputs/apk/debug/app-debug.apk charades/build-output/PartyCharades-v1-debug.apk
-          fi
-          if [ ! -f charades/signing/debug.keystore ] && [ -f "$HOME/.android/debug.keystore" ]; then
-            cp "$HOME/.android/debug.keystore" charades/signing/debug.keystore
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -f charades/build-output
-          if [ -f charades/signing/debug.keystore ]; then git add -f charades/signing/debug.keystore; fi
           if ! git diff --cached --quiet; then
             git commit -m 'Party Charades build diagnostics [skip ci]'
             git push
