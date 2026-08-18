@@ -28,31 +28,55 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Unpack Charades sources
+      - name: Diagnose and unpack Charades bundles
+        shell: bash
         run: |
+          set +e
           mkdir -p charades/app/src/main/java/com/partycharades/offline charades/app/src/main/assets decoded-charades
-          base64 -d charades/embedded/MainActivity.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/MainActivity.java
-          base64 -d charades/embedded/PartyManager.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/PartyManager.java
-          base64 -d charades/embedded/topic_seeds.json.gz.b64 | gzip -dc > charades/app/src/main/assets/topic_seeds.json
-          cp charades/app/src/main/java/com/partycharades/offline/MainActivity.java decoded-charades/MainActivity.java
-          cp charades/app/src/main/assets/topic_seeds.json decoded-charades/topic_seeds.json
+          : > decoded-charades/bundle-status.txt
+          unpack() {
+            src="$1"; dst="$2"; label="$3"
+            tmp="/tmp/${label}.gz"
+            if base64 -d "$src" > "$tmp" 2>/tmp/${label}.b64.err && gzip -t "$tmp" 2>/tmp/${label}.gz.err; then
+              gzip -dc "$tmp" > "$dst"
+              echo "$label=OK bytes=$(wc -c < "$dst")" >> decoded-charades/bundle-status.txt
+              return 0
+            else
+              echo "$label=INVALID" >> decoded-charades/bundle-status.txt
+              cat /tmp/${label}.b64.err /tmp/${label}.gz.err >> decoded-charades/bundle-status.txt 2>/dev/null
+              return 1
+            fi
+          }
+          unpack charades/embedded/MainActivity.java.gz.b64 charades/app/src/main/java/com/partycharades/offline/MainActivity.java MainActivity
+          unpack charades/embedded/PartyManager.java.gz.b64 charades/app/src/main/java/com/partycharades/offline/PartyManager.java PartyManager
+          unpack charades/embedded/topic_seeds.json.gz.b64 charades/app/src/main/assets/topic_seeds.json topic_seeds
+          [ -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java ] && cp charades/app/src/main/java/com/partycharades/offline/MainActivity.java decoded-charades/MainActivity.java
+          [ -s charades/app/src/main/java/com/partycharades/offline/PartyManager.java ] && cp charades/app/src/main/java/com/partycharades/offline/PartyManager.java decoded-charades/PartyManager.java
+          [ -s charades/app/src/main/assets/topic_seeds.json ] && cp charades/app/src/main/assets/topic_seeds.json decoded-charades/topic_seeds.json
+          cat decoded-charades/bundle-status.txt
+          exit 0
 
       - name: Upload decoded content audit
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: charades-decoded-content
           path: decoded-charades
+          if-no-files-found: error
 
       - name: Restore stable signing key
+        if: ${{ hashFiles('charades/app/src/main/java/com/partycharades/offline/MainActivity.java') != '' && hashFiles('charades/app/src/main/java/com/partycharades/offline/PartyManager.java') != '' && hashFiles('charades/app/src/main/assets/topic_seeds.json') != '' }}
         run: |
           mkdir -p "$HOME/.android"
           base64 -d charades/signing/debug.keystore.b64 > "$HOME/.android/debug.keystore"
 
       - name: Build APK
+        if: ${{ hashFiles('charades/app/src/main/java/com/partycharades/offline/MainActivity.java') != '' && hashFiles('charades/app/src/main/java/com/partycharades/offline/PartyManager.java') != '' && hashFiles('charades/app/src/main/assets/topic_seeds.json') != '' }}
         working-directory: charades
         run: gradle :app:assembleDebug
 
       - name: Upload APK
+        if: ${{ hashFiles('charades/app/build/outputs/apk/debug/app-debug.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: PartyCharades-PR-debug-apk
