@@ -39,6 +39,28 @@ jobs:
           test -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java
           test -s charades/app/src/main/assets/topic_seeds.json
 
+      - name: Audit content generation
+        shell: bash
+        run: |
+          mkdir -p charades/build-output
+          python3 - <<'PY' > charades/build-output/content-audit.txt
+          import json, re
+          p='charades/app/src/main/assets/topic_seeds.json'
+          data=json.load(open(p, encoding='utf-8'))
+          print('TOP_LEVEL_TYPE', type(data).__name__)
+          if isinstance(data, dict): print('TOP_LEVEL_KEYS', list(data.keys()))
+          elif isinstance(data, list): print('TOP_LEVEL_LEN', len(data))
+          print('\n=== FIRST TOPIC ===')
+          first = data[0] if isinstance(data,list) else next(iter(data.values()))
+          print(json.dumps(first, ensure_ascii=False, indent=2)[:12000])
+          print('\n=== JAVA GENERATION LINES ===')
+          src=open('charades/app/src/main/java/com/partycharades/offline/MainActivity.java',encoding='utf-8').read().splitlines()
+          needles=('template','using ','cleaning ','act out','describe ','guess ','seed','prompt','difficulty')
+          for i,line in enumerate(src,1):
+              low=line.lower()
+              if any(n in low for n in needles): print(f'{i}: {line}')
+          PY
+
       - name: Restore stable Party Charades signing key
         run: |
           mkdir -p "$HOME/.android"
