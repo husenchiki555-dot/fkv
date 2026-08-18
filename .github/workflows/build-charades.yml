@@ -47,28 +47,48 @@ jobs:
             cp charades/signing/debug.keystore "$HOME/.android/debug.keystore"
           fi
 
-      - name: Build installable APK
+      - name: Build installable APK and capture diagnostics
         working-directory: charades
-        run: gradle :app:assembleDebug --stacktrace
+        shell: bash
+        run: |
+          mkdir -p build-output
+          set +e
+          set -o pipefail
+          gradle :app:assembleDebug --stacktrace 2>&1 | tee build-output/build.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -eq 0 ] && [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            echo 'SUCCESS' > build-output/build-status.txt
+          else
+            echo "FAILURE exit_code=$code" > build-output/build-status.txt
+          fi
+          exit 0
 
       - name: Upload APK artifact
+        if: ${{ hashFiles('charades/app/build/outputs/apk/debug/app-debug.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: PartyCharades-v1-debug-apk
           path: charades/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Save APK and signing key on build branch
+      - name: Save diagnostics, APK, and signing key on build branch
+        shell: bash
         run: |
           mkdir -p charades/build-output charades/signing
-          cp charades/app/build/outputs/apk/debug/app-debug.apk charades/build-output/PartyCharades-v1-debug.apk
-          if [ ! -f charades/signing/debug.keystore ]; then
+          if [ -f charades/app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp charades/app/build/outputs/apk/debug/app-debug.apk charades/build-output/PartyCharades-v1-debug.apk
+          fi
+          if [ ! -f charades/signing/debug.keystore ] && [ -f "$HOME/.android/debug.keystore" ]; then
             cp "$HOME/.android/debug.keystore" charades/signing/debug.keystore
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add charades/build-output/PartyCharades-v1-debug.apk charades/signing/debug.keystore
+          git add -f charades/build-output
+          if [ -f charades/signing/debug.keystore ]; then git add -f charades/signing/debug.keystore; fi
           if ! git diff --cached --quiet; then
-            git commit -m 'Build Party Charades v1 APK [skip ci]'
+            git commit -m 'Party Charades build diagnostics [skip ci]'
             git push
           fi
+
+      - name: Fail workflow when compilation failed
+        run: grep -q '^SUCCESS' charades/build-output/build-status.txt
