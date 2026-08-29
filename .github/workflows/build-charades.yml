@@ -1,0 +1,129 @@
+name: Build Party Charades APK
+
+on:
+  push:
+    branches: [charades-build-v1]
+    paths-ignore:
+      - 'charades/build-output/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Ensure Android SDK 35
+        run: yes | sdkmanager --licenses >/dev/null || true; sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Unpack offline sources and explicit card bank
+        shell: bash
+        run: |
+          mkdir -p charades/app/src/main/java/com/partycharades/offline charades/app/src/main/assets charades/build-output
+          base64 -d charades/embedded/MainActivity.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/MainActivity.java
+          base64 -d charades/embedded/PartyManager.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/PartyManager.java
+          cat \
+            charades/embedded/v2/topic_cards.part00 \
+            charades/embedded/v2/topic_cards.part01 \
+            charades/embedded/v2/topic_cards.part02 \
+            charades/embedded/v2/topic_cards.part03 \
+            charades/embedded/v2/topic_cards.part04a \
+            charades/embedded/v2/topic_cards.part04b \
+            charades/embedded/v2/topic_cards.part05a \
+            charades/embedded/v2/topic_cards.part05b1 \
+            charades/embedded/v2/topic_cards.part05b2 \
+            | base64 -d | gzip -dc > charades/app/src/main/assets/topic_seeds.json
+          test -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java
+          test -s charades/app/src/main/assets/topic_seeds.json
+
+      - name: Audit explicit card database
+        run: |
+          python3 charades/scripts/generate_clean_cards.py charades/app/src/main/assets/topic_seeds.json charades/app/src/main/assets/topic_seeds.json | tee charades/build-output/content-audit.txt
+          python3 - <<'PY'
+          import json, collections
+          d=json.load(open('charades/app/src/main/assets/topic_seeds.json',encoding='utf-8'))
+          assert len(d)==50
+          assert sum(len(t['cards']) for t in d)==4851
+          assert min(len(t['cards']) for t in d)>=80
+          for t in d:
+              assert len({c['text'].casefold() for c in t['cards']})==len(t['cards'])
+              n=collections.Counter(c['difficulty'] for c in t['cards'])
+              assert all(n[x]>0 for x in ('Easy','Normal','Hard'))
+          print('FINAL ASSET VERIFIED: 50 decks / 4851 explicit cards / no padding templates')
+          PY
+
+      - name: Restore stable Party Charades signing key
+        run: |
+          mkdir -p "$HOME/.android"
+          base64 -d charades/signing/debug.keystore.b64 > "$HOME/.android/debug.keystore"
+          test -s "$HOME/.android/debug.keystore"
+
+      - name: Build installable APK and capture diagnostics
+        working-directory: charades
+        shell: bash
+        run: |
+          mkdir -p build-output
+          set +e
+          set -o pipefail
+          gradle :app:assembleDebug --stacktrace 2>&1 | tee build-output/build.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -eq 0 ] && [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            echo 'SUCCESS' > build-output/build-status.txt
+          else
+            echo "FAILURE exit_code=$code" > build-output/build-status.txt
+          fi
+          exit 0
+
+      - name: Verify APK package, alignment and signature
+        if: ${{ hashFiles('charades/app/build/outputs/apk/debug/app-debug.apk') != '' }}
+        shell: bash
+        run: |
+          {
+            echo '=== PACKAGE ==='
+            "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging charades/app/build/outputs/apk/debug/app-debug.apk | head -n 20
+            echo '=== ALIGNMENT ==='
+            "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 charades/app/build/outputs/apk/debug/app-debug.apk
+            echo '=== SIGNATURE ==='
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs charades/app/build/outputs/apk/debug/app-debug.apk
+          } 2>&1 | tee charades/build-output/apk-verify.txt
+          grep "package: name='com.partycharades.offline'" charades/build-output/apk-verify.txt >/dev/null || "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging charades/app/build/outputs/apk/debug/app-debug.apk | grep "package: name='com.partycharades.offline'"
+
+      - name: Upload APK artifact
+        if: ${{ hashFiles('charades/app/build/outputs/apk/debug/app-debug.apk') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: PartyCharades-mixed-clean-apk
+          path: charades/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Save diagnostics and APK on build branch
+        shell: bash
+        run: |
+          mkdir -p charades/build-output
+          if [ -f charades/app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp charades/app/build/outputs/apk/debug/app-debug.apk charades/build-output/PartyCharades-mixed-clean.apk
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f charades/build-output
+          if ! git diff --cached --quiet; then
+            git commit -m 'Party Charades build diagnostics [skip ci]'
+            git push
+          fi
+
+      - name: Fail workflow when compilation failed
+        run: grep -q '^SUCCESS' charades/build-output/build-status.txt
