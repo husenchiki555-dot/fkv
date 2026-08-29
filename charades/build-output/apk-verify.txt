@@ -24,12 +24,12 @@ Verifying alignment of charades/app/build/outputs/apk/debug/app-debug.apk (4)...
       87 META-INF/com/android/build/gradle/app-metadata.properties (OK - compressed)
      180 classes.dex (OK - compressed)
      846 classes2.dex (OK - compressed)
-   36014 assets/topic_seeds.json (OK - compressed)
-   86388 AndroidManifest.xml (OK - compressed)
-   87464 resources.arsc (OK)
-   88138 META-INF/CERT.SF (OK - compressed)
-   88656 META-INF/CERT.RSA (OK - compressed)
-   89726 META-INF/MANIFEST.MF (OK - compressed)
+   38567 assets/topic_seeds.json (OK - compressed)
+   81389 AndroidManifest.xml (OK - compressed)
+   82468 resources.arsc (OK)
+   83142 META-INF/CERT.SF (OK - compressed)
+   83664 META-INF/CERT.RSA (OK - compressed)
+   84736 META-INF/MANIFEST.MF (OK - compressed)
 Verification succesful
 === SIGNATURE ===
 Verifies
@@ -41,12 +41,12 @@ Verified using v4 scheme (APK Signature Scheme v4): false
 Verified for SourceStamp: false
 Number of signers: 1
 Signer #1 certificate DN: C=US, O=Android, CN=Android Debug
-Signer #1 certificate SHA-256 digest: 52301e9259f777e118712125cbc0e5382056a4e79622e936ab6479695e3cdf99
-Signer #1 certificate SHA-1 digest: a8e9e818b13b39563a99c57920e9652e424dc76c
-Signer #1 certificate MD5 digest: be3d5c19f6e565253a466deec9aaef4e
+Signer #1 certificate SHA-256 digest: 37e83c9d9a6cc5f1cf4aa562db98a30acd2fe344733b2249d1a5384d08c9a887
+Signer #1 certificate SHA-1 digest: eccd9b29a378ac5418aa53da19e571b608e527c4
+Signer #1 certificate MD5 digest: 9e630739c69d2ee1c94e72f8086aabe1
 Signer #1 key algorithm: RSA
 Signer #1 key size (bits): 2048
-Signer #1 public key SHA-256 digest: 5e5cbe57fac3254c36467e8a2410a61019c804a5b8a235d0c7e3080ac15eb767
-Signer #1 public key SHA-1 digest: 4295c09d369a465a58f93f9e726ec800017fea7b
-Signer #1 public key MD5 digest: 3d8371ba0dd4bc45fad82089e99c756c
+Signer #1 public key SHA-256 digest: 5dc411608f6db0f0965fbf920459fde649617af5f7d0d27e9cc4f171f8407ca6
+Signer #1 public key SHA-1 digest: dabc14e6481cdd22c3f7d2c9764a02edd20d5316
+Signer #1 public key MD5 digest: 1066037dd931285a4480848e63cdff4f
 WARNING: META-INF/com/android/build/gradle/app-metadata.properties not protected by signature. Unauthorized modifications to this JAR entry will not be detected. Delete or move the entry outside of META-INF/.

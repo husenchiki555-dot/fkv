@@ -1,1 +1,1 @@
-CONTENT AUDIT SUCCESS: 50 topics, 10000 cards, 200/topic, 0 duplicates, 0 malformed/known-bad patterns
+CONTENT AUDIT SUCCESS: 50 decks, 4851 explicit cards, no generated filler phrases, no duplicates within decks
