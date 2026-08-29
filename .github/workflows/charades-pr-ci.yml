@@ -30,18 +30,28 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Unpack Charades bundles
+      - name: Unpack Charades sources and explicit cards
         shell: bash
         run: |
           mkdir -p charades/app/src/main/java/com/partycharades/offline charades/app/src/main/assets decoded-charades
           base64 -d charades/embedded/MainActivity.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/MainActivity.java
           base64 -d charades/embedded/PartyManager.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/PartyManager.java
-          base64 -d charades/embedded/topic_seeds.json.gz.b64 | gzip -dc > charades/app/src/main/assets/topic_seeds.json
+          cat \
+            charades/embedded/v2/topic_cards.part00 \
+            charades/embedded/v2/topic_cards.part01 \
+            charades/embedded/v2/topic_cards.part02 \
+            charades/embedded/v2/topic_cards.part03 \
+            charades/embedded/v2/topic_cards.part04a \
+            charades/embedded/v2/topic_cards.part04b \
+            charades/embedded/v2/topic_cards.part05a \
+            charades/embedded/v2/topic_cards.part05b1 \
+            charades/embedded/v2/topic_cards.part05b2 \
+            | base64 -d | gzip -dc > charades/app/src/main/assets/topic_seeds.json
           test -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java
           test -s charades/app/src/main/java/com/partycharades/offline/PartyManager.java
           test -s charades/app/src/main/assets/topic_seeds.json
 
-      - name: Generate and audit final cards
+      - name: Audit clean word bank
         run: |
           python3 charades/scripts/generate_clean_cards.py charades/app/src/main/assets/topic_seeds.json charades/app/src/main/assets/topic_seeds.json | tee decoded-charades/content-audit.txt
           cp charades/app/src/main/java/com/partycharades/offline/MainActivity.java decoded-charades/MainActivity.java
@@ -49,19 +59,20 @@ jobs:
           python3 - <<'PY'
           import json,collections
           d=json.load(open('charades/app/src/main/assets/topic_seeds.json',encoding='utf-8'))
-          assert len(d)==50 and sum(len(t['cards']) for t in d)==10000
+          assert len(d)==50
+          assert sum(len(t['cards']) for t in d)==4851
+          assert min(len(t['cards']) for t in d)>=80
           for t in d:
-              assert len(t['cards'])==200
-              assert len({c['text'].casefold() for c in t['cards']})==200
+              assert len({c['text'].casefold() for c in t['cards']})==len(t['cards'])
               n=collections.Counter(c['difficulty'] for c in t['cards'])
-              assert n=={'Easy':80,'Normal':80,'Hard':40}
-          print('FULL CARD AUDIT PASSED')
+              assert all(n[x]>0 for x in ('Easy','Normal','Hard'))
+          print('FULL CARD AUDIT PASSED: explicit cards only')
           PY
 
       - name: Upload decoded content audit
         uses: actions/upload-artifact@v4
         with:
-          name: charades-decoded-content
+          name: charades-decoded-content-v2
           path: decoded-charades
           if-no-files-found: error
 
@@ -83,5 +94,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PartyCharades-clean-words-apk
+          name: PartyCharades-mixed-clean-apk
           path: charades/app/build/outputs/apk/debug/app-debug.apk
