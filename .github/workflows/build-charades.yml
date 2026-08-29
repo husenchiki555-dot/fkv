@@ -30,26 +30,40 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Unpack offline sources
+      - name: Unpack offline sources and explicit card bank
+        shell: bash
         run: |
           mkdir -p charades/app/src/main/java/com/partycharades/offline charades/app/src/main/assets charades/build-output
           base64 -d charades/embedded/MainActivity.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/MainActivity.java
           base64 -d charades/embedded/PartyManager.java.gz.b64 | gzip -dc > charades/app/src/main/java/com/partycharades/offline/PartyManager.java
-          base64 -d charades/embedded/topic_seeds.json.gz.b64 | gzip -dc > charades/app/src/main/assets/topic_seeds.json
+          cat \
+            charades/embedded/v2/topic_cards.part00 \
+            charades/embedded/v2/topic_cards.part01 \
+            charades/embedded/v2/topic_cards.part02 \
+            charades/embedded/v2/topic_cards.part03 \
+            charades/embedded/v2/topic_cards.part04a \
+            charades/embedded/v2/topic_cards.part04b \
+            charades/embedded/v2/topic_cards.part05a \
+            charades/embedded/v2/topic_cards.part05b1 \
+            charades/embedded/v2/topic_cards.part05b2 \
+            | base64 -d | gzip -dc > charades/app/src/main/assets/topic_seeds.json
           test -s charades/app/src/main/java/com/partycharades/offline/MainActivity.java
           test -s charades/app/src/main/assets/topic_seeds.json
 
-      - name: Generate and audit final card database
+      - name: Audit explicit card database
         run: |
           python3 charades/scripts/generate_clean_cards.py charades/app/src/main/assets/topic_seeds.json charades/app/src/main/assets/topic_seeds.json | tee charades/build-output/content-audit.txt
           python3 - <<'PY'
-          import json
+          import json, collections
           d=json.load(open('charades/app/src/main/assets/topic_seeds.json',encoding='utf-8'))
           assert len(d)==50
-          assert all(len(t['cards'])==200 for t in d)
-          assert sum(len(t['cards']) for t in d)==10000
-          assert not any('seeds' in t for t in d)
-          print('FINAL ASSET VERIFIED')
+          assert sum(len(t['cards']) for t in d)==4851
+          assert min(len(t['cards']) for t in d)>=80
+          for t in d:
+              assert len({c['text'].casefold() for c in t['cards']})==len(t['cards'])
+              n=collections.Counter(c['difficulty'] for c in t['cards'])
+              assert all(n[x]>0 for x in ('Easy','Normal','Hard'))
+          print('FINAL ASSET VERIFIED: 50 decks / 4851 explicit cards / no padding templates')
           PY
 
       - name: Restore stable Party Charades signing key
@@ -86,12 +100,13 @@ jobs:
             echo '=== SIGNATURE ==='
             "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs charades/app/build/outputs/apk/debug/app-debug.apk
           } 2>&1 | tee charades/build-output/apk-verify.txt
+          grep "package: name='com.partycharades.offline'" charades/build-output/apk-verify.txt >/dev/null || "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging charades/app/build/outputs/apk/debug/app-debug.apk | grep "package: name='com.partycharades.offline'"
 
       - name: Upload APK artifact
         if: ${{ hashFiles('charades/app/build/outputs/apk/debug/app-debug.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: PartyCharades-v1-debug-apk
+          name: PartyCharades-mixed-clean-apk
           path: charades/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -100,7 +115,7 @@ jobs:
         run: |
           mkdir -p charades/build-output
           if [ -f charades/app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp charades/app/build/outputs/apk/debug/app-debug.apk charades/build-output/PartyCharades-v1-debug.apk
+            cp charades/app/build/outputs/apk/debug/app-debug.apk charades/build-output/PartyCharades-mixed-clean.apk
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
